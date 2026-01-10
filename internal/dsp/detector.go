@@ -79,9 +79,10 @@ type Detector struct {
 	warmupCounter int // blocks processed, detection disabled until >= AGCWarmupBlocks
 
 	// Hysteresis state
-	toneState       bool // current confirmed tone state
-	pendingState    bool // state we're transitioning to
-	hysteresisCount int  // consecutive blocks in pending state
+	toneState        bool      // current confirmed tone state
+	pendingState     bool      // state we're transitioning to
+	hysteresisCount  int       // consecutive blocks in pending state
+	pendingStartTime time.Time // when pending state began (for accurate duration)
 
 	// Timing for duration calculation
 	lastTransition time.Time
@@ -145,7 +146,16 @@ func (d *Detector) SetCallback(cb ToneCallback) {
 // Process processes incoming audio samples and detects tones.
 // Samples should be float32 normalized to -1.0 to 1.0.
 // This method handles buffering for overlap processing.
+//
+// The internal buffer is bounded: it holds at most blockSize-1 samples between calls,
+// plus whatever samples are passed in. For real-time audio processing with typical
+// buffer sizes (256-4096 samples), this is well-behaved. Passing extremely large
+// slices will process them incrementally without excessive memory use.
 func (d *Detector) Process(samples []float32) {
+	if len(samples) == 0 {
+		return // Nothing to process
+	}
+
 	// Append new samples to overlap buffer
 	d.overlapBuffer = append(d.overlapBuffer, samples...)
 
@@ -233,6 +243,7 @@ func (d *Detector) updateHysteresis(tonePresent bool, magnitude float64) {
 		// State matches, reset hysteresis counter
 		d.pendingState = d.toneState
 		d.hysteresisCount = 0
+		d.pendingStartTime = time.Time{} // Clear pending start time
 		return
 	}
 
@@ -244,24 +255,32 @@ func (d *Detector) updateHysteresis(tonePresent bool, magnitude float64) {
 		// Changed direction, start new pending state
 		d.pendingState = tonePresent
 		d.hysteresisCount = 1
+		d.pendingStartTime = now // Record when this pending state began
 	}
 
 	// Check if we've reached the hysteresis threshold
 	if d.hysteresisCount >= d.config.Hysteresis {
 		// Confirm the state change
+		// Use pendingStartTime for accurate transition timing (not confirmation time)
+		transitionTime := d.pendingStartTime
+		if transitionTime.IsZero() {
+			transitionTime = now // Fallback if somehow not set
+		}
+
 		duration := time.Duration(0)
 		if !d.lastTransition.IsZero() {
-			duration = now.Sub(d.lastTransition)
+			duration = transitionTime.Sub(d.lastTransition)
 		}
 
 		d.toneState = d.pendingState
-		d.lastTransition = now
+		d.lastTransition = transitionTime // Use actual transition time
 		d.hysteresisCount = 0
+		d.pendingStartTime = time.Time{}
 
 		// Emit event via callback
 		d.emitEvent(ToneEvent{
 			ToneOn:    d.toneState,
-			Timestamp: now,
+			Timestamp: transitionTime,
 			Duration:  duration,
 			Magnitude: magnitude,
 		})
@@ -289,10 +308,12 @@ func (d *Detector) AGCPeak() float64 {
 // Reset resets the detector state
 func (d *Detector) Reset() {
 	d.overlapBuffer = d.overlapBuffer[:0]
-	d.agcPeak = 0.001
+	d.agcPeak = 1.0 // Match initial value from NewDetector
+	d.warmupCounter = 0
 	d.toneState = false
 	d.pendingState = false
 	d.hysteresisCount = 0
+	d.pendingStartTime = time.Time{}
 	d.lastTransition = time.Time{}
 }
 

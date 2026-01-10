@@ -637,8 +637,8 @@ func TestDetector_Reset(t *testing.T) {
 	if d.ToneState() != false {
 		t.Error("ToneState should be false after Reset")
 	}
-	if d.AGCPeak() != 0.001 {
-		t.Errorf("AGCPeak should be 0.001 after Reset, got %v", d.AGCPeak())
+	if d.AGCPeak() != 1.0 {
+		t.Errorf("AGCPeak should be 1.0 after Reset, got %v", d.AGCPeak())
 	}
 }
 
