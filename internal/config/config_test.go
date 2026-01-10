@@ -48,7 +48,7 @@ func TestInit_WithDefaults(t *testing.T) {
 		{"agc_enabled", true},
 		{"wpm", 15},
 		{"adaptive_timing", true},
-		{"buffer_size", 64},
+		{"buffer_size", 1024},
 		{"debug", false},
 	}
 
@@ -411,5 +411,148 @@ func TestEnsureConfigExists_WriteError(t *testing.T) {
 	err := ensureConfigExists(filepath.Join(configPath, "subdir"))
 	if err == nil {
 		t.Error("ensureConfigExists() should return error for read-only directory")
+	}
+}
+
+func TestInit_LoadsDotConfigYaml(t *testing.T) {
+	resetViper()
+
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Change to temp directory
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("failed to restore dir: %v", err)
+		}
+	}()
+
+	// Create .config.yaml (hidden config file)
+	dotConfigContent := `audio_device: "hw:1,0"
+sample_rate: 48000
+channels: 1
+format: "S16_LE"
+buffer_size: 1024
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".config.yaml"), []byte(dotConfigContent), 0644); err != nil {
+		t.Fatalf("failed to write .config.yaml: %v", err)
+	}
+
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Verify audio settings are loaded
+	tests := []struct {
+		key      string
+		expected interface{}
+	}{
+		{"audio_device", "hw:1,0"},
+		{"sample_rate", 48000},
+		{"channels", 1},
+		{"format", "S16_LE"},
+		{"buffer_size", 1024},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := viper.Get(tt.key)
+			if got != tt.expected {
+				t.Errorf("viper.Get(%q) = %v, want %v", tt.key, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInit_DotConfigTakesPrecedence(t *testing.T) {
+	resetViper()
+
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Change to temp directory
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("failed to restore dir: %v", err)
+		}
+	}()
+
+	// Create both .config.yaml and config.yaml
+	if err := os.WriteFile(filepath.Join(tmpDir, ".config.yaml"), []byte("wpm: 30"), 0644); err != nil {
+		t.Fatalf("failed to write .config.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("wpm: 20"), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// .config.yaml should take precedence
+	if got := viper.GetInt("wpm"); got != 30 {
+		t.Errorf("viper.GetInt(wpm) = %d, want 30 (.config.yaml should take precedence)", got)
+	}
+}
+
+func TestGet_ReturnsAudioSettings(t *testing.T) {
+	resetViper()
+
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Change to temp directory
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Logf("failed to restore dir: %v", err)
+		}
+	}()
+
+	// Create .config.yaml with audio settings
+	configContent := `audio_device: "hw:2,0"
+sample_rate: 44100
+channels: 2
+format: "S32_LE"
+buffer_size: 2048
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".config.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write .config.yaml: %v", err)
+	}
+
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	settings, err := Get()
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+
+	if settings.AudioDevice != "hw:2,0" {
+		t.Errorf("Settings.AudioDevice = %s, want hw:2,0", settings.AudioDevice)
+	}
+	if settings.SampleRate != 44100 {
+		t.Errorf("Settings.SampleRate = %f, want 44100", settings.SampleRate)
+	}
+	if settings.Channels != 2 {
+		t.Errorf("Settings.Channels = %d, want 2", settings.Channels)
+	}
+	if settings.Format != "S32_LE" {
+		t.Errorf("Settings.Format = %s, want S32_LE", settings.Format)
+	}
+	if settings.BufferSize != 2048 {
+		t.Errorf("Settings.BufferSize = %d, want 2048", settings.BufferSize)
 	}
 }

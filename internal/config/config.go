@@ -15,55 +15,71 @@ const (
 	ConfigType    = "yaml"
 	DefaultConfig = `# CW Decoder Configuration
 
-# Audio settings
-device_index: -1      # -1 for default device
-sample_rate: 48000    # Audio sample rate in Hz
-channels: 1           # Number of channels (1=mono)
+# Audio device settings
+audio_device: "hw:1,0"  # ALSA device (use 'arecord -l' to find)
+device_index: -1        # -1 for default device
+sample_rate: 48000      # Audio sample rate in Hz
+channels: 1             # Number of channels (1=mono)
+format: "S16_LE"        # Audio format (S16_LE = 16-bit signed little-endian)
+buffer_size: 1024       # Audio buffer size
 
 # Tone detection
-tone_frequency: 600   # CW tone frequency in Hz
-block_size: 512       # Goertzel block size
-overlap_pct: 50       # Block overlap percentage (0-99)
+tone_frequency: 600     # CW tone frequency in Hz
+block_size: 512         # Goertzel block size
+overlap_pct: 50         # Block overlap percentage (0-99)
 
 # Detection thresholds
-threshold: 0.4        # Detection threshold (0.0-1.0)
-hysteresis: 5         # Samples required for state change
-agc_enabled: true     # Enable automatic gain control
+threshold: 0.4          # Detection threshold (0.0-1.0)
+hysteresis: 5           # Samples required for state change
+agc_enabled: true       # Enable automatic gain control
 
 # Timing
-wpm: 15               # Initial WPM estimate
-adaptive_timing: true # Adapt to sender's speed
+wpm: 15                 # Initial WPM estimate
+adaptive_timing: true   # Adapt to sender's speed
 
 # Output
-buffer_size: 64       # Output channel buffer size
-debug: false          # Enable debug output
+debug: false            # Enable debug output
 `
 )
 
 // Settings holds all application configuration
 type Settings struct {
-	DeviceIndex    int     `mapstructure:"device_index"`
-	SampleRate     float64 `mapstructure:"sample_rate"`
-	Channels       int     `mapstructure:"channels"`
-	ToneFrequency  float64 `mapstructure:"tone_frequency"`
-	BlockSize      int     `mapstructure:"block_size"`
-	OverlapPct     int     `mapstructure:"overlap_pct"`
-	Threshold      float64 `mapstructure:"threshold"`
-	Hysteresis     int     `mapstructure:"hysteresis"`
-	AGCEnabled     bool    `mapstructure:"agc_enabled"`
-	WPM            int     `mapstructure:"wpm"`
-	AdaptiveTiming bool    `mapstructure:"adaptive_timing"`
-	BufferSize     int     `mapstructure:"buffer_size"`
-	Debug          bool    `mapstructure:"debug"`
+	// Audio device settings
+	AudioDevice string  `mapstructure:"audio_device"`
+	DeviceIndex int     `mapstructure:"device_index"`
+	SampleRate  float64 `mapstructure:"sample_rate"`
+	Channels    int     `mapstructure:"channels"`
+	Format      string  `mapstructure:"format"`
+	BufferSize  int     `mapstructure:"buffer_size"`
+
+	// Tone detection
+	ToneFrequency float64 `mapstructure:"tone_frequency"`
+	BlockSize     int     `mapstructure:"block_size"`
+	OverlapPct    int     `mapstructure:"overlap_pct"`
+
+	// Detection thresholds
+	Threshold  float64 `mapstructure:"threshold"`
+	Hysteresis int     `mapstructure:"hysteresis"`
+	AGCEnabled bool    `mapstructure:"agc_enabled"`
+
+	// Timing
+	WPM            int  `mapstructure:"wpm"`
+	AdaptiveTiming bool `mapstructure:"adaptive_timing"`
+
+	// Output
+	Debug bool `mapstructure:"debug"`
 }
 
 // Init initializes Viper with defaults and config file.
 // Config file search order: current directory, then ~/.config/cwdecoder/
 func Init() error {
 	// Set defaults
+	viper.SetDefault("audio_device", "hw:1,0")
 	viper.SetDefault("device_index", -1)
 	viper.SetDefault("sample_rate", 48000)
 	viper.SetDefault("channels", 1)
+	viper.SetDefault("format", "S16_LE")
+	viper.SetDefault("buffer_size", 1024)
 	viper.SetDefault("tone_frequency", 600)
 	viper.SetDefault("block_size", 512)
 	viper.SetDefault("overlap_pct", 50)
@@ -72,10 +88,9 @@ func Init() error {
 	viper.SetDefault("agc_enabled", true)
 	viper.SetDefault("wpm", 15)
 	viper.SetDefault("adaptive_timing", true)
-	viper.SetDefault("buffer_size", 64)
 	viper.SetDefault("debug", false)
 
-	viper.SetConfigName("config")
+	// Support both config.yaml and .config.yaml
 	viper.SetConfigType(ConfigType)
 
 	// Priority order: current directory first, then XDG config
@@ -87,8 +102,16 @@ func Init() error {
 	}
 	viper.AddConfigPath(filepath.Join(configDir, AppName))
 
-	// Read config file - if not found, create default in XDG config dir
+	// Try .config.yaml first (hidden file), then config.yaml
+	viper.SetConfigName(".config")
 	if err = viper.ReadInConfig(); err != nil {
+		// Try config.yaml as fallback
+		viper.SetConfigName("config")
+		err = viper.ReadInConfig()
+	}
+
+	// Read config file - if not found, create default in XDG config dir
+	if err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if errors.As(err, &configFileNotFoundError) {
 			// No config found - create default in ~/.config/cwdecoder/
