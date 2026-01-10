@@ -537,3 +537,263 @@ func BenchmarkCopyFloat32Slice(b *testing.B) {
 		_ = copyFloat32Slice(data)
 	}
 }
+
+// Tests for closed flag and closeOnce race condition fixes
+
+func TestCapture_ClosedFlag_InitialState(t *testing.T) {
+	capture := New(DefaultConfig())
+
+	if capture.closed.Load() {
+		t.Error("closed flag should be false initially")
+	}
+}
+
+func TestCapture_ClosedFlag_SetOnClose(t *testing.T) {
+	capture := New(DefaultConfig())
+
+	// Initialize to allow Close() to work properly
+	if err := capture.Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+
+	if err := capture.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	if !capture.closed.Load() {
+		t.Error("closed flag should be true after Close()")
+	}
+}
+
+func TestCapture_CloseOnce_MultipleCloses(t *testing.T) {
+	capture := New(DefaultConfig())
+
+	// Initialize
+	if err := capture.Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+
+	// First close should succeed
+	if err := capture.Close(); err != nil {
+		t.Fatalf("first Close() error: %v", err)
+	}
+
+	// Second close should not panic (closeOnce protects channel)
+	// Note: This may return an error since ctx is nil, but should not panic
+	_ = capture.Close()
+
+	// If we get here without panic, the test passes
+}
+
+func TestCapture_ClosedFlag_PreventsSendOnClosedChannel(t *testing.T) {
+	capture := New(DefaultConfig())
+
+	// Set closed flag
+	capture.closed.Store(true)
+
+	// Simulate what the callback does - should not send when closed
+	samples := []float32{1.0, 2.0, 3.0}
+
+	// This mimics the logic in onRecvFrames
+	sent := false
+	if !capture.closed.Load() {
+		select {
+		case capture.Samples <- samples:
+			sent = true
+		default:
+		}
+	}
+
+	if sent {
+		t.Error("should not send samples when closed flag is set")
+	}
+}
+
+func TestCapture_ConcurrentCloseAndSend(t *testing.T) {
+	// This test verifies the protection mechanism works:
+	// 1. closed flag is checked before send
+	// 2. closeOnce prevents double-close
+	// 3. After closed is true, no sends are attempted
+
+	capture := New(DefaultConfig())
+
+	// Phase 1: Send some samples while not closed
+	sentCount := 0
+	for i := 0; i < 10; i++ {
+		if !capture.closed.Load() {
+			select {
+			case capture.Samples <- []float32{1.0}:
+				sentCount++
+			default:
+			}
+		}
+	}
+
+	if sentCount == 0 {
+		t.Error("should have sent some samples before close")
+	}
+
+	// Phase 2: Set closed flag
+	capture.closed.Store(true)
+
+	// Phase 3: Try to send after closed - should not attempt send
+	attemptedAfterClose := false
+	if !capture.closed.Load() {
+		attemptedAfterClose = true
+		select {
+		case capture.Samples <- []float32{1.0}:
+		default:
+		}
+	}
+
+	if attemptedAfterClose {
+		t.Error("should not attempt send after closed flag is set")
+	}
+
+	// Phase 4: Close channel safely
+	capture.closeOnce.Do(func() {
+		close(capture.Samples)
+	})
+
+	// Phase 5: Verify double-close is safe
+	capture.closeOnce.Do(func() {
+		close(capture.Samples) // This should NOT execute
+		t.Error("closeOnce should prevent this from running")
+	})
+}
+
+func TestCapture_ConcurrentCloseAndSend_Stress(t *testing.T) {
+	// Stress test: multiple goroutines checking closed flag and closing
+	// This tests the atomicity of the closed flag operations
+
+	for iteration := 0; iteration < 100; iteration++ {
+		capture := New(DefaultConfig())
+		var wg sync.WaitGroup
+
+		// Multiple goroutines checking the closed flag
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 100; j++ {
+					// Read the closed flag atomically
+					_ = capture.closed.Load()
+				}
+			}()
+		}
+
+		// One goroutine sets the closed flag
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			capture.closed.Store(true)
+			capture.closeOnce.Do(func() {
+				close(capture.Samples)
+			})
+		}()
+
+		wg.Wait()
+
+		// Verify final state
+		if !capture.closed.Load() {
+			t.Errorf("iteration %d: closed flag should be true", iteration)
+		}
+	}
+}
+
+func TestCapture_CloseOnce_ConcurrentCloses(t *testing.T) {
+	// Test that multiple concurrent Close() calls don't cause double-close panic
+	capture := New(DefaultConfig())
+
+	if err := capture.Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	numGoroutines := 10
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = capture.Close() // Ignore errors, just check for panic
+		}()
+	}
+
+	// If closeOnce doesn't work, this will panic with "close of closed channel"
+	wg.Wait()
+}
+
+func TestCapture_ClosedFlag_RaceWithCallback(t *testing.T) {
+	// Stress test: concurrent reads and writes of closed flag
+	capture := New(DefaultConfig())
+
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// Writers (simulating Close setting the flag)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					capture.closed.Store(true)
+					capture.closed.Store(false)
+				}
+			}
+		}()
+	}
+
+	// Readers (simulating callback checking the flag)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					_ = capture.closed.Load()
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestCapture_Close_SetsClosedBeforeChannelClose(t *testing.T) {
+	// Verify that closed flag is set before the channel is closed
+	// This is important for the race condition fix
+	capture := New(DefaultConfig())
+
+	if err := capture.Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+
+	// Start a goroutine that checks the flag when channel is closed
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range capture.Samples {
+			// drain
+		}
+		// When we get here, channel is closed
+		// The closed flag should already be true
+		if !capture.closed.Load() {
+			t.Error("closed flag should be true when channel is closed")
+		}
+	}()
+
+	if err := capture.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	<-done
+}

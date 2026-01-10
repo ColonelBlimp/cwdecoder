@@ -48,13 +48,15 @@ type Capture struct {
 	ctx     *malgo.AllocatedContext
 	device  *malgo.Device
 	running atomic.Bool
-	mu      sync.Mutex // protects ctx and device
+	closed  atomic.Bool // prevents sends to closed channel
+	mu      sync.Mutex  // protects ctx and device
 
 	// Atomic pointer for lock-free callback access in hot path
 	callbackPtr atomic.Pointer[SampleCallback]
 
 	// Output channel for audio samples (float32 normalized -1.0 to 1.0)
-	Samples chan []float32
+	Samples   chan []float32
+	closeOnce sync.Once // ensures channel is closed only once
 }
 
 // New creates a new audio capture instance
@@ -138,8 +140,7 @@ func (c *Capture) Start(ctx context.Context) error {
 		},
 	}
 
-	// Select specific device if requested
-	var deviceID *malgo.DeviceID
+	// Select specific device if requested - set before initialization
 	if c.config.DeviceIndex >= 0 {
 		devices, err := c.ListDevices()
 		if err != nil {
@@ -151,7 +152,7 @@ func (c *Capture) Start(ctx context.Context) error {
 			return fmt.Errorf("device index %d out of range (have %d devices)",
 				c.config.DeviceIndex, len(devices))
 		}
-		deviceID = &devices[c.config.DeviceIndex].ID
+		deviceConfig.Capture.DeviceID = devices[c.config.DeviceIndex].ID.Pointer()
 	}
 
 	// Callback receives audio data
@@ -169,10 +170,13 @@ func (c *Capture) Start(ctx context.Context) error {
 		}
 
 		// For channel consumers, we must copy since the buffer is reused
-		select {
-		case c.Samples <- copyFloat32Slice(samples):
-		default:
-			// Drop samples if channel is full (consumer too slow)
+		// Check closed flag to prevent send on closed channel
+		if !c.closed.Load() {
+			select {
+			case c.Samples <- copyFloat32Slice(samples):
+			default:
+				// Drop samples if channel is full (consumer too slow)
+			}
 		}
 	}
 
@@ -184,18 +188,6 @@ func (c *Capture) Start(ctx context.Context) error {
 	if err != nil {
 		c.running.Store(false)
 		return fmt.Errorf("init device: %w", err)
-	}
-
-	// Set device ID if specified
-	if deviceID != nil {
-		deviceConfig.Capture.DeviceID = deviceID.Pointer()
-		// Reinitialize with specific device
-		device.Uninit()
-		device, err = malgo.InitDevice(audioCtx, deviceConfig, deviceCallbacks)
-		if err != nil {
-			c.running.Store(false)
-			return fmt.Errorf("init device with ID: %w", err)
-		}
 	}
 
 	if err := device.Start(); err != nil {
@@ -241,6 +233,9 @@ func (c *Capture) Stop() error {
 
 // Close releases all audio resources
 func (c *Capture) Close() error {
+	// Set closed flag first to stop any in-flight callbacks from sending
+	c.closed.Store(true)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -261,7 +256,10 @@ func (c *Capture) Close() error {
 		c.ctx = nil
 	}
 
-	close(c.Samples)
+	// Safely close channel only once
+	c.closeOnce.Do(func() {
+		close(c.Samples)
+	})
 	return nil
 }
 
