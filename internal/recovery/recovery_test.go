@@ -84,7 +84,7 @@ func TestHandlePanicFunc_ExitsOnPanic(t *testing.T) {
 	if os.Getenv("TEST_PANIC_FUNC_EXIT") == "1" {
 		defer HandlePanicFunc(func() {
 			// Write marker to stdout to verify cleanup was called
-			os.Stdout.WriteString("CLEANUP_CALLED\n")
+			_, _ = os.Stdout.WriteString("CLEANUP_CALLED\n")
 		})
 		panic("test panic func")
 	}
