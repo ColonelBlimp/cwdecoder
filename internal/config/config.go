@@ -57,7 +57,8 @@ type Settings struct {
 	Debug          bool    `mapstructure:"debug"`
 }
 
-// Init initializes Viper with defaults and config file
+// Init initializes Viper with defaults and config file.
+// Config file search order: current directory, then ~/.config/cwdecoder/
 func Init() error {
 	// Set defaults
 	viper.SetDefault("device_index", -1)
@@ -74,27 +75,32 @@ func Init() error {
 	viper.SetDefault("buffer_size", 64)
 	viper.SetDefault("debug", false)
 
-	// Config file location
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		configDir = os.Getenv("HOME")
-	}
-	configPath := filepath.Join(configDir, AppName)
-
 	viper.SetConfigName("config")
 	viper.SetConfigType(ConfigType)
-	viper.AddConfigPath(configPath)
+
+	// Priority order: current directory first, then XDG config
 	viper.AddConfigPath(".")
 
-	// Create the default config if it doesn't exist
-	if err = ensureConfigExists(configPath); err != nil {
-		return err
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		configDir = filepath.Join(os.Getenv("HOME"), ".config")
 	}
+	viper.AddConfigPath(filepath.Join(configDir, AppName))
 
-	// Read the config file
+	// Read config file - if not found, create default in XDG config dir
 	if err = viper.ReadInConfig(); err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
-		if !errors.As(err, &configFileNotFoundError) {
+		if errors.As(err, &configFileNotFoundError) {
+			// No config found - create default in ~/.config/cwdecoder/
+			xdgConfigPath := filepath.Join(configDir, AppName)
+			if err = ensureConfigExists(xdgConfigPath); err != nil {
+				return err
+			}
+			// Read the newly created config
+			if err = viper.ReadInConfig(); err != nil {
+				return fmt.Errorf("read config: %w", err)
+			}
+		} else {
 			return fmt.Errorf("read config: %w", err)
 		}
 	}
@@ -104,8 +110,6 @@ func Init() error {
 
 func ensureConfigExists(configPath string) error {
 	configFile := filepath.Join(configPath, "config.yaml")
-
-	fmt.Println(configFile)
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		if err = os.MkdirAll(configPath, 0755); err != nil {
