@@ -11,14 +11,18 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "cwdecoder",
+	Use:   "decoder",
 	Short: "CW (Morse code) decoder from audio input",
 	Long:  `A real-time CW decoder that processes audio input and outputs decoded text.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Running decoder...")
+		return nil
+	},
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -33,15 +37,15 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("debug", "D", false, "enable debug output")
 
 	// Bind flags to viper
-	viper.BindPFlag("device_index", rootCmd.PersistentFlags().Lookup("device"))
-	viper.BindPFlag("tone_frequency", rootCmd.PersistentFlags().Lookup("frequency"))
-	viper.BindPFlag("wpm", rootCmd.PersistentFlags().Lookup("wpm"))
-	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	cobra.CheckErr(viper.BindPFlag("device_index", rootCmd.PersistentFlags().Lookup("device")))
+	cobra.CheckErr(viper.BindPFlag("tone_frequency", rootCmd.PersistentFlags().Lookup("frequency")))
+	cobra.CheckErr(viper.BindPFlag("wpm", rootCmd.PersistentFlags().Lookup("wpm")))
+	cobra.CheckErr(viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug")))
 }
 
 func initConfig() {
 	if err := config.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,14 +86,15 @@ func Init() error {
 	viper.AddConfigPath(configPath)
 	viper.AddConfigPath(".")
 
-	// Create default config if it doesn't exist
-	if err := ensureConfigExists(configPath); err != nil {
+	// Create the default config if it doesn't exist
+	if err = ensureConfigExists(configPath); err != nil {
 		return err
 	}
 
-	// Read config file
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+	// Read the config file
+	if err = viper.ReadInConfig(); err != nil {
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if !errors.As(err, &configFileNotFoundError) {
 			return fmt.Errorf("read config: %w", err)
 		}
 	}
@@ -103,11 +105,13 @@ func Init() error {
 func ensureConfigExists(configPath string) error {
 	configFile := filepath.Join(configPath, "config.yaml")
 
+	fmt.Println(configFile)
+
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		if err := os.MkdirAll(configPath, 0755); err != nil {
+		if err = os.MkdirAll(configPath, 0755); err != nil {
 			return fmt.Errorf("create config dir: %w", err)
 		}
-		if err := os.WriteFile(configFile, []byte(DefaultConfig), 0644); err != nil {
+		if err = os.WriteFile(configFile, []byte(DefaultConfig), 0644); err != nil {
 			return fmt.Errorf("write default config: %w", err)
 		}
 	}
