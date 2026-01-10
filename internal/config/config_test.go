@@ -556,3 +556,436 @@ buffer_size: 2048
 		t.Errorf("Settings.BufferSize = %d, want 2048", settings.BufferSize)
 	}
 }
+
+// Validation tests
+
+func TestSettings_Validate_ValidSettings(t *testing.T) {
+	s := &Settings{
+		AudioDevice:    "hw:1,0",
+		DeviceIndex:    -1,
+		SampleRate:     48000,
+		Channels:       1,
+		Format:         "S16_LE",
+		BufferSize:     1024,
+		ToneFrequency:  600,
+		BlockSize:      512,
+		OverlapPct:     50,
+		Threshold:      0.4,
+		Hysteresis:     5,
+		AGCEnabled:     true,
+		AGCDecay:       0.9995,
+		AGCAttack:      0.1,
+		WPM:            15,
+		AdaptiveTiming: true,
+		Debug:          false,
+	}
+
+	if err := s.Validate(); err != nil {
+		t.Errorf("Validate() error = %v, want nil for valid settings", err)
+	}
+}
+
+func TestSettings_Validate_SampleRate(t *testing.T) {
+	tests := []struct {
+		name       string
+		sampleRate float64
+		wantErr    bool
+	}{
+		{"too low", 7999, true},
+		{"minimum", 8000, false},
+		{"typical 44100", 44100, false},
+		{"typical 48000", 48000, false},
+		{"high 96000", 96000, false},
+		{"maximum", 192000, false},
+		{"too high", 192001, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.SampleRate = tt.sampleRate
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_Channels(t *testing.T) {
+	tests := []struct {
+		name     string
+		channels int
+		wantErr  bool
+	}{
+		{"zero", 0, true},
+		{"mono", 1, false},
+		{"stereo", 2, false},
+		{"too many", 3, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.Channels = tt.channels
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_BufferSize(t *testing.T) {
+	tests := []struct {
+		name       string
+		bufferSize int
+		wantErr    bool
+	}{
+		{"too small", 32, true},
+		{"minimum", 64, false},
+		{"typical 512", 512, false},
+		{"typical 1024", 1024, false},
+		{"maximum", 8192, false},
+		{"too large", 8193, true},
+		{"not power of 2", 100, true},
+		{"not power of 2 large", 1000, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.BufferSize = tt.bufferSize
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_ToneFrequency(t *testing.T) {
+	tests := []struct {
+		name          string
+		toneFrequency float64
+		wantErr       bool
+	}{
+		{"too low", 99, true},
+		{"minimum", 100, false},
+		{"typical 600", 600, false},
+		{"typical 700", 700, false},
+		{"maximum", 3000, false},
+		{"too high", 3001, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.ToneFrequency = tt.toneFrequency
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_BlockSize(t *testing.T) {
+	tests := []struct {
+		name      string
+		blockSize int
+		wantErr   bool
+	}{
+		{"too small", 16, true},
+		{"minimum", 32, false},
+		{"typical 256", 256, false},
+		{"typical 512", 512, false},
+		{"maximum", 4096, false},
+		{"too large", 4097, true},
+		{"not power of 2", 100, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.BlockSize = tt.blockSize
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_OverlapPct(t *testing.T) {
+	tests := []struct {
+		name       string
+		overlapPct int
+		wantErr    bool
+	}{
+		{"negative", -1, true},
+		{"zero", 0, false},
+		{"typical 50", 50, false},
+		{"high 75", 75, false},
+		{"maximum", 99, false},
+		{"too high", 100, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.OverlapPct = tt.overlapPct
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_Threshold(t *testing.T) {
+	tests := []struct {
+		name      string
+		threshold float64
+		wantErr   bool
+	}{
+		{"negative", -0.1, true},
+		{"zero", 0.0, false},
+		{"typical", 0.4, false},
+		{"maximum", 1.0, false},
+		{"too high", 1.1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.Threshold = tt.threshold
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_Hysteresis(t *testing.T) {
+	tests := []struct {
+		name       string
+		hysteresis int
+		wantErr    bool
+	}{
+		{"zero", 0, true},
+		{"minimum", 1, false},
+		{"typical", 5, false},
+		{"maximum", 50, false},
+		{"too high", 51, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.Hysteresis = tt.hysteresis
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_AGCDecay(t *testing.T) {
+	tests := []struct {
+		name     string
+		agcDecay float64
+		wantErr  bool
+	}{
+		{"too low", 0.989, true},
+		{"minimum", 0.99, false},
+		{"typical", 0.9995, false},
+		{"maximum", 0.99999, false},
+		{"too high", 0.999991, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.AGCDecay = tt.agcDecay
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_AGCAttack(t *testing.T) {
+	tests := []struct {
+		name      string
+		agcAttack float64
+		wantErr   bool
+	}{
+		{"negative", -0.1, true},
+		{"zero", 0.0, false},
+		{"typical", 0.1, false},
+		{"maximum", 1.0, false},
+		{"too high", 1.1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.AGCAttack = tt.agcAttack
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_WPM(t *testing.T) {
+	tests := []struct {
+		name    string
+		wpm     int
+		wantErr bool
+	}{
+		{"too slow", 4, true},
+		{"minimum", 5, false},
+		{"typical", 15, false},
+		{"fast", 30, false},
+		{"maximum", 60, false},
+		{"too fast", 61, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.WPM = tt.wpm
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_Format(t *testing.T) {
+	validFormats := []string{"S16_LE", "S16_BE", "S24_LE", "S24_BE", "S32_LE", "S32_BE", "F32_LE", "F32_BE"}
+	invalidFormats := []string{"", "invalid", "S8", "U16_LE", "FLOAT"}
+
+	for _, format := range validFormats {
+		t.Run("valid_"+format, func(t *testing.T) {
+			s := validSettings()
+			s.Format = format
+			if err := s.Validate(); err != nil {
+				t.Errorf("Validate() error = %v for valid format %q", err, format)
+			}
+		})
+	}
+
+	for _, format := range invalidFormats {
+		t.Run("invalid_"+format, func(t *testing.T) {
+			s := validSettings()
+			s.Format = format
+			if err := s.Validate(); err == nil {
+				t.Errorf("Validate() should error for invalid format %q", format)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_NyquistFrequency(t *testing.T) {
+	tests := []struct {
+		name          string
+		sampleRate    float64
+		toneFrequency float64
+		wantErr       bool
+	}{
+		{"well below nyquist", 48000, 600, false},
+		{"near max tone freq", 48000, 3000, false},
+		{"at nyquist low sample", 8000, 4000, true},
+		{"above nyquist low sample", 8000, 5000, true},
+		{"low sample rate valid", 8000, 3000, false},
+		{"tone above nyquist", 10000, 6000, true}, // 6000 Hz > 5000 Hz (Nyquist for 10kHz)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			s.SampleRate = tt.sampleRate
+			s.ToneFrequency = tt.toneFrequency
+			err := s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettings_Validate_MultipleErrors(t *testing.T) {
+	s := &Settings{
+		SampleRate:    0,     // invalid
+		Channels:      0,     // invalid
+		BufferSize:    10,    // invalid
+		ToneFrequency: 0,     // invalid
+		BlockSize:     10,    // invalid
+		OverlapPct:    -1,    // invalid
+		Threshold:     2.0,   // invalid
+		Hysteresis:    0,     // invalid
+		AGCDecay:      0.5,   // invalid
+		AGCAttack:     2.0,   // invalid
+		WPM:           0,     // invalid
+		Format:        "bad", // invalid
+	}
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("Validate() should return error for multiple invalid fields")
+	}
+
+	// Should contain multiple error messages
+	errStr := err.Error()
+	expectedSubstrings := []string{
+		"sample_rate",
+		"channels",
+		"buffer_size",
+		"tone_frequency",
+		"block_size",
+		"overlap_pct",
+		"threshold",
+		"hysteresis",
+		"agc_decay",
+		"agc_attack",
+		"wpm",
+		"format",
+	}
+
+	for _, substr := range expectedSubstrings {
+		if !contains(errStr, substr) {
+			t.Errorf("Validate() error should mention %q, got: %v", substr, errStr)
+		}
+	}
+}
+
+// validSettings returns a Settings struct with all valid values
+func validSettings() *Settings {
+	return &Settings{
+		AudioDevice:    "hw:1,0",
+		DeviceIndex:    -1,
+		SampleRate:     48000,
+		Channels:       1,
+		Format:         "S16_LE",
+		BufferSize:     1024,
+		ToneFrequency:  600,
+		BlockSize:      512,
+		OverlapPct:     50,
+		Threshold:      0.4,
+		Hysteresis:     5,
+		AGCEnabled:     true,
+		AGCDecay:       0.9995,
+		AGCAttack:      0.1,
+		WPM:            15,
+		AdaptiveTiming: true,
+		Debug:          false,
+	}
+}

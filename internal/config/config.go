@@ -160,5 +160,86 @@ func Get() (*Settings, error) {
 	if err := viper.Unmarshal(&s); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if err := s.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 	return &s, nil
+}
+
+// Validate checks that all settings are within acceptable ranges
+func (s *Settings) Validate() error {
+	var errs []error
+
+	// Audio device settings
+	if s.SampleRate < 8000 || s.SampleRate > 192000 {
+		errs = append(errs, fmt.Errorf("sample_rate must be between 8000 and 192000 Hz, got %v", s.SampleRate))
+	}
+	if s.Channels < 1 || s.Channels > 2 {
+		errs = append(errs, fmt.Errorf("channels must be 1 or 2, got %d", s.Channels))
+	}
+	if s.BufferSize < 64 || s.BufferSize > 8192 {
+		errs = append(errs, fmt.Errorf("buffer_size must be between 64 and 8192, got %d", s.BufferSize))
+	}
+	// Buffer size should be power of 2 for optimal FFT/Goertzel performance
+	if s.BufferSize&(s.BufferSize-1) != 0 {
+		errs = append(errs, fmt.Errorf("buffer_size should be a power of 2, got %d", s.BufferSize))
+	}
+
+	// Tone detection
+	if s.ToneFrequency < 100 || s.ToneFrequency > 3000 {
+		errs = append(errs, fmt.Errorf("tone_frequency must be between 100 and 3000 Hz, got %v", s.ToneFrequency))
+	}
+	if s.BlockSize < 32 || s.BlockSize > 4096 {
+		errs = append(errs, fmt.Errorf("block_size must be between 32 and 4096, got %d", s.BlockSize))
+	}
+	if s.BlockSize&(s.BlockSize-1) != 0 {
+		errs = append(errs, fmt.Errorf("block_size should be a power of 2, got %d", s.BlockSize))
+	}
+	if s.OverlapPct < 0 || s.OverlapPct > 99 {
+		errs = append(errs, fmt.Errorf("overlap_pct must be between 0 and 99, got %d", s.OverlapPct))
+	}
+
+	// Detection thresholds
+	if s.Threshold < 0.0 || s.Threshold > 1.0 {
+		errs = append(errs, fmt.Errorf("threshold must be between 0.0 and 1.0, got %v", s.Threshold))
+	}
+	if s.Hysteresis < 1 || s.Hysteresis > 50 {
+		errs = append(errs, fmt.Errorf("hysteresis must be between 1 and 50, got %d", s.Hysteresis))
+	}
+	if s.AGCDecay < 0.99 || s.AGCDecay > 0.99999 {
+		errs = append(errs, fmt.Errorf("agc_decay must be between 0.99 and 0.99999, got %v", s.AGCDecay))
+	}
+	if s.AGCAttack < 0.0 || s.AGCAttack > 1.0 {
+		errs = append(errs, fmt.Errorf("agc_attack must be between 0.0 and 1.0, got %v", s.AGCAttack))
+	}
+
+	// Timing
+	if s.WPM < 5 || s.WPM > 60 {
+		errs = append(errs, fmt.Errorf("wpm must be between 5 and 60, got %d", s.WPM))
+	}
+
+	// Validate audio format
+	validFormats := map[string]bool{
+		"S16_LE": true,
+		"S16_BE": true,
+		"S24_LE": true,
+		"S24_BE": true,
+		"S32_LE": true,
+		"S32_BE": true,
+		"F32_LE": true,
+		"F32_BE": true,
+	}
+	if !validFormats[s.Format] {
+		errs = append(errs, fmt.Errorf("format must be one of S16_LE, S16_BE, S24_LE, S24_BE, S32_LE, S32_BE, F32_LE, F32_BE, got %q", s.Format))
+	}
+
+	// Nyquist check: tone frequency must be less than half the sample rate
+	if s.ToneFrequency >= s.SampleRate/2 {
+		errs = append(errs, fmt.Errorf("tone_frequency (%v Hz) must be less than Nyquist frequency (%v Hz)", s.ToneFrequency, s.SampleRate/2))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
