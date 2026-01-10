@@ -73,12 +73,8 @@ func TestCapture_SetCallback(t *testing.T) {
 		// callback set
 	})
 
-	// Verify callback is set (we can't directly access it, but we can test the mutex works)
-	capture.mu.RLock()
-	hasCallback := capture.callback != nil
-	capture.mu.RUnlock()
-
-	if !hasCallback {
+	// Verify callback is set using atomic load
+	if capture.callbackPtr.Load() == nil {
 		t.Error("SetCallback() did not set callback")
 	}
 }
@@ -92,11 +88,7 @@ func TestCapture_SetCallback_Nil(t *testing.T) {
 	// Then set to nil
 	capture.SetCallback(nil)
 
-	capture.mu.RLock()
-	hasCallback := capture.callback != nil
-	capture.mu.RUnlock()
-
-	if hasCallback {
+	if capture.callbackPtr.Load() != nil {
 		t.Error("SetCallback(nil) should clear callback")
 	}
 }
@@ -351,7 +343,7 @@ func TestCapture_ConcurrentSetCallbackAndRead(t *testing.T) {
 		}()
 	}
 
-	// Readers (simulating callback access pattern)
+	// Readers (simulating callback access pattern using atomic)
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
@@ -361,9 +353,7 @@ func TestCapture_ConcurrentSetCallbackAndRead(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					capture.mu.RLock()
-					_ = capture.callback
-					capture.mu.RUnlock()
+					_ = capture.callbackPtr.Load()
 				}
 			}
 		}()
@@ -442,5 +432,110 @@ func TestBytesToFloat32_LargeBuffer(t *testing.T) {
 		if sample != expected {
 			t.Errorf("sample[%d] = %f, want %f", i, sample, expected)
 		}
+	}
+}
+
+func TestBytesAsFloat32_ZeroCopy(t *testing.T) {
+	// 1.0 = 0x3F800000 in little-endian
+	bytes := []byte{0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x80, 0xBF}
+
+	result := bytesAsFloat32(bytes)
+
+	if len(result) != 2 {
+		t.Fatalf("length = %d, want 2", len(result))
+	}
+	if result[0] != 1.0 {
+		t.Errorf("result[0] = %f, want 1.0", result[0])
+	}
+	if result[1] != -1.0 {
+		t.Errorf("result[1] = %f, want -1.0", result[1])
+	}
+}
+
+func TestBytesAsFloat32_Empty(t *testing.T) {
+	result := bytesAsFloat32([]byte{})
+	if result != nil {
+		t.Errorf("bytesAsFloat32(empty) = %v, want nil", result)
+	}
+}
+
+func TestBytesAsFloat32_TooSmall(t *testing.T) {
+	result := bytesAsFloat32([]byte{0x00, 0x00, 0x80})
+	if result != nil {
+		t.Errorf("bytesAsFloat32(3 bytes) = %v, want nil", result)
+	}
+}
+
+func TestCopyFloat32Slice(t *testing.T) {
+	original := []float32{1.0, 2.0, 3.0}
+	copied := copyFloat32Slice(original)
+
+	if len(copied) != len(original) {
+		t.Fatalf("length = %d, want %d", len(copied), len(original))
+	}
+
+	// Verify values match
+	for i := range original {
+		if copied[i] != original[i] {
+			t.Errorf("copied[%d] = %f, want %f", i, copied[i], original[i])
+		}
+	}
+
+	// Verify it's a true copy (modifying original doesn't affect copy)
+	original[0] = 999.0
+	if copied[0] == 999.0 {
+		t.Error("copyFloat32Slice did not create independent copy")
+	}
+}
+
+func TestCopyFloat32Slice_Nil(t *testing.T) {
+	result := copyFloat32Slice(nil)
+	if result != nil {
+		t.Errorf("copyFloat32Slice(nil) = %v, want nil", result)
+	}
+}
+
+func TestCopyFloat32Slice_Empty(t *testing.T) {
+	result := copyFloat32Slice([]float32{})
+	if len(result) != 0 {
+		t.Errorf("copyFloat32Slice(empty) length = %d, want 0", len(result))
+	}
+}
+
+func BenchmarkBytesToFloat32(b *testing.B) {
+	// 512 samples typical audio buffer
+	data := make([]byte, 512*4)
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = bytesToFloat32(data)
+	}
+}
+
+func BenchmarkBytesAsFloat32(b *testing.B) {
+	// 512 samples typical audio buffer
+	data := make([]byte, 512*4)
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = bytesAsFloat32(data)
+	}
+}
+
+func BenchmarkCopyFloat32Slice(b *testing.B) {
+	data := make([]float32, 512)
+	for i := range data {
+		data[i] = float32(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = copyFloat32Slice(data)
 	}
 }

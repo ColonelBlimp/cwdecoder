@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gen2brain/malgo"
@@ -38,16 +39,19 @@ func DefaultConfig() Config {
 
 // SampleCallback is called directly from the audio thread with new samples.
 // Use for low-latency processing. Must be non-blocking and fast.
+// WARNING: The samples slice is only valid for the duration of the callback.
 type SampleCallback func(samples []float32)
 
 // Capture handles real-time audio sampling from a USB audio device
 type Capture struct {
-	config   Config
-	ctx      *malgo.AllocatedContext
-	device   *malgo.Device
-	running  bool
-	mu       sync.RWMutex
-	callback SampleCallback
+	config  Config
+	ctx     *malgo.AllocatedContext
+	device  *malgo.Device
+	running bool
+	mu      sync.RWMutex
+
+	// Atomic pointer for lock-free callback access in hot path
+	callbackPtr atomic.Pointer[SampleCallback]
 
 	// Output channel for audio samples (float32 normalized -1.0 to 1.0)
 	Samples chan []float32
@@ -65,9 +69,11 @@ func New(cfg Config) *Capture {
 // The callback is invoked directly from the audio thread - it must be
 // non-blocking and fast. Set before calling Start().
 func (c *Capture) SetCallback(cb SampleCallback) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.callback = cb
+	if cb == nil {
+		c.callbackPtr.Store(nil)
+	} else {
+		c.callbackPtr.Store(&cb)
+	}
 }
 
 // Init initializes the audio backend
@@ -145,20 +151,17 @@ func (c *Capture) Start(ctx context.Context) error {
 			return
 		}
 
-		// Convert bytes to float32 samples
-		samples := bytesToFloat32(inputSamples)
+		// Zero-copy conversion: reinterpret byte slice as float32 slice
+		samples := bytesAsFloat32(inputSamples)
 
-		// Call real-time callback if registered (for low-latency processing)
-		c.mu.RLock()
-		cb := c.callback
-		c.mu.RUnlock()
-		if cb != nil {
-			cb(samples)
+		// Lock-free callback access using atomic pointer
+		if cbPtr := c.callbackPtr.Load(); cbPtr != nil {
+			(*cbPtr)(samples)
 		}
 
-		// Non-blocking send to prevent callback blocking
+		// For channel consumers, we must copy since the buffer is reused
 		select {
-		case c.Samples <- samples:
+		case c.Samples <- copyFloat32Slice(samples):
 		default:
 			// Drop samples if channel is full (consumer too slow)
 		}
@@ -259,7 +262,30 @@ func (c *Capture) IsRunning() bool {
 	return c.running
 }
 
-// bytesToFloat32 converts raw bytes to float32 samples
+// bytesAsFloat32 performs zero-copy conversion of a byte slice to float32 slice.
+// WARNING: The returned slice shares memory with the input - do not use after
+// the input buffer is reused or freed.
+func bytesAsFloat32(data []byte) []float32 {
+	if len(data) < 4 {
+		return nil
+	}
+	numSamples := len(data) / 4
+	return unsafe.Slice((*float32)(unsafe.Pointer(&data[0])), numSamples)
+}
+
+// copyFloat32Slice creates a copy of a float32 slice.
+// Used when samples need to outlive the audio callback.
+func copyFloat32Slice(src []float32) []float32 {
+	if src == nil {
+		return nil
+	}
+	dst := make([]float32, len(src))
+	copy(dst, src)
+	return dst
+}
+
+// bytesToFloat32 converts raw bytes to float32 samples (allocates new slice).
+// Prefer bytesAsFloat32 for zero-copy access in hot paths.
 func bytesToFloat32(data []byte) []float32 {
 	numSamples := len(data) / 4
 	samples := make([]float32, numSamples)
