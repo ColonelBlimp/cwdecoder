@@ -47,8 +47,8 @@ type Capture struct {
 	config  Config
 	ctx     *malgo.AllocatedContext
 	device  *malgo.Device
-	running bool
-	mu      sync.RWMutex
+	running atomic.Bool
+	mu      sync.Mutex // protects ctx and device
 
 	// Atomic pointer for lock-free callback access in hot path
 	callbackPtr atomic.Pointer[SampleCallback]
@@ -81,6 +81,10 @@ func (c *Capture) Init() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.ctx != nil {
+		return errors.New("already initialized")
+	}
+
 	ctxConfig := malgo.ContextConfig{}
 	ctx, err := malgo.InitContext(nil, ctxConfig, nil)
 	if err != nil {
@@ -93,8 +97,8 @@ func (c *Capture) Init() error {
 
 // ListDevices returns available capture devices
 func (c *Capture) ListDevices() ([]malgo.DeviceInfo, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.ctx == nil {
 		return nil, ErrNotInitialized
@@ -110,15 +114,18 @@ func (c *Capture) ListDevices() ([]malgo.DeviceInfo, error) {
 
 // Start begins audio capture
 func (c *Capture) Start(ctx context.Context) error {
-	c.mu.Lock()
-	if c.running {
-		c.mu.Unlock()
+	// Use atomic swap to ensure only one caller can start
+	if !c.running.CompareAndSwap(false, true) {
 		return ErrAlreadyRunning
 	}
+
+	c.mu.Lock()
 	if c.ctx == nil {
 		c.mu.Unlock()
+		c.running.Store(false)
 		return ErrNotInitialized
 	}
+	audioCtx := c.ctx.Context // capture for use after unlock
 	c.mu.Unlock()
 
 	deviceConfig := malgo.DeviceConfig{
@@ -136,9 +143,11 @@ func (c *Capture) Start(ctx context.Context) error {
 	if c.config.DeviceIndex >= 0 {
 		devices, err := c.ListDevices()
 		if err != nil {
+			c.running.Store(false)
 			return err
 		}
 		if c.config.DeviceIndex >= len(devices) {
+			c.running.Store(false)
 			return fmt.Errorf("device index %d out of range (have %d devices)",
 				c.config.DeviceIndex, len(devices))
 		}
@@ -171,8 +180,9 @@ func (c *Capture) Start(ctx context.Context) error {
 		Data: onRecvFrames,
 	}
 
-	device, err := malgo.InitDevice(c.ctx.Context, deviceConfig, deviceCallbacks)
+	device, err := malgo.InitDevice(audioCtx, deviceConfig, deviceCallbacks)
 	if err != nil {
+		c.running.Store(false)
 		return fmt.Errorf("init device: %w", err)
 	}
 
@@ -181,20 +191,21 @@ func (c *Capture) Start(ctx context.Context) error {
 		deviceConfig.Capture.DeviceID = deviceID.Pointer()
 		// Reinitialize with specific device
 		device.Uninit()
-		device, err = malgo.InitDevice(c.ctx.Context, deviceConfig, deviceCallbacks)
+		device, err = malgo.InitDevice(audioCtx, deviceConfig, deviceCallbacks)
 		if err != nil {
+			c.running.Store(false)
 			return fmt.Errorf("init device with ID: %w", err)
 		}
 	}
 
 	if err := device.Start(); err != nil {
 		device.Uninit()
+		c.running.Store(false)
 		return fmt.Errorf("start device: %w", err)
 	}
 
 	c.mu.Lock()
 	c.device = device
-	c.running = true
 	c.mu.Unlock()
 
 	// Wait for context cancellation
@@ -210,12 +221,12 @@ func (c *Capture) Start(ctx context.Context) error {
 
 // Stop stops audio capture
 func (c *Capture) Stop() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !c.running {
+	if !c.running.CompareAndSwap(true, false) {
 		return ErrNotRunning
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.device != nil {
 		if err := c.device.Stop(); err != nil {
@@ -225,7 +236,6 @@ func (c *Capture) Stop() error {
 		c.device = nil
 	}
 
-	c.running = false
 	return nil
 }
 
@@ -234,13 +244,13 @@ func (c *Capture) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.running && c.device != nil {
+	if c.running.Load() && c.device != nil {
 		if err := c.device.Stop(); err != nil {
 			log.Printf("audio: device stop on close: %v", err)
 		}
 		c.device.Uninit()
 		c.device = nil
-		c.running = false
+		c.running.Store(false)
 	}
 
 	if c.ctx != nil {
@@ -257,9 +267,7 @@ func (c *Capture) Close() error {
 
 // IsRunning returns true if capture is active
 func (c *Capture) IsRunning() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.running
+	return c.running.Load()
 }
 
 // bytesAsFloat32 performs zero-copy conversion of a byte slice to float32 slice.

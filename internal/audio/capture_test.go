@@ -116,9 +116,7 @@ func TestCapture_Start_AlreadyRunning(t *testing.T) {
 	capture := New(DefaultConfig())
 
 	// Manually set running state to simulate already running
-	capture.mu.Lock()
-	capture.running = true
-	capture.mu.Unlock()
+	capture.running.Store(true)
 
 	ctx := context.Background()
 	err := capture.Start(ctx)
