@@ -1,46 +1,47 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
+// cmd/root.go
 package cmd
 
 import (
+	"fmt"
 	"os"
 
+	"github.com/ColonelBlimp/cwdecoder/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "cwdecoder",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	Short: "CW (Morse code) decoder from audio input",
+	Long:  `A real-time CW decoder that processes audio input and outputs decoded text.`,
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
+	cobra.OnInitialize(initConfig)
 
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.cwdecoder.yaml)")
+	// Global flags (override config file)
+	rootCmd.PersistentFlags().IntP("device", "d", -1, "audio device index (-1 for default)")
+	rootCmd.PersistentFlags().Float64P("frequency", "f", 600, "CW tone frequency in Hz")
+	rootCmd.PersistentFlags().IntP("wpm", "w", 15, "initial WPM estimate")
+	rootCmd.PersistentFlags().BoolP("debug", "D", false, "enable debug output")
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Bind flags to viper
+	viper.BindPFlag("device_index", rootCmd.PersistentFlags().Lookup("device"))
+	viper.BindPFlag("tone_frequency", rootCmd.PersistentFlags().Lookup("frequency"))
+	viper.BindPFlag("wpm", rootCmd.PersistentFlags().Lookup("wpm"))
+	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+}
+
+func initConfig() {
+	if err := config.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		os.Exit(1)
+	}
 }
