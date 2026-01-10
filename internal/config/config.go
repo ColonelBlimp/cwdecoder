@@ -25,13 +25,18 @@ buffer_size: 1024       # Audio buffer size
 
 # Tone detection
 tone_frequency: 600     # CW tone frequency in Hz
-block_size: 512         # Goertzel block size
-overlap_pct: 50         # Block overlap percentage (0-99)
+block_size: 512         # Goertzel block size (samples per detection window)
+overlap_pct: 50         # Block overlap percentage (0-99), higher = smoother but more CPU
 
 # Detection thresholds
-threshold: 0.4          # Detection threshold (0.0-1.0)
-hysteresis: 5           # Samples required for state change
-agc_enabled: true       # Enable automatic gain control
+threshold: 0.4          # Detection threshold (0.0-1.0), tone magnitude must exceed this
+hysteresis: 5           # Consecutive blocks required to confirm state change (reduces noise)
+agc_enabled: true       # Enable automatic gain control (normalizes input levels)
+agc_decay: 0.9995       # AGC peak decay rate per sample (0.999-0.99999)
+                        # Lower = faster decay (~0.999 = 20ms), Higher = slower (~0.9999 = 200ms)
+                        # At 48kHz: 0.9995 gives ~100ms decay time constant
+agc_attack: 0.1         # AGC attack rate (0.0-1.0), how fast to respond to louder signals
+                        # Higher = faster response, Lower = more gradual
 
 # Timing
 wpm: 15                 # Initial WPM estimate
@@ -61,6 +66,8 @@ type Settings struct {
 	Threshold  float64 `mapstructure:"threshold"`
 	Hysteresis int     `mapstructure:"hysteresis"`
 	AGCEnabled bool    `mapstructure:"agc_enabled"`
+	AGCDecay   float64 `mapstructure:"agc_decay"`
+	AGCAttack  float64 `mapstructure:"agc_attack"`
 
 	// Timing
 	WPM            int  `mapstructure:"wpm"`
@@ -86,6 +93,8 @@ func Init() error {
 	viper.SetDefault("threshold", 0.4)
 	viper.SetDefault("hysteresis", 5)
 	viper.SetDefault("agc_enabled", true)
+	viper.SetDefault("agc_decay", 0.9995)
+	viper.SetDefault("agc_attack", 0.1)
 	viper.SetDefault("wpm", 15)
 	viper.SetDefault("adaptive_timing", true)
 	viper.SetDefault("debug", false)
