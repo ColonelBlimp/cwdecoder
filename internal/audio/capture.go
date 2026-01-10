@@ -171,12 +171,9 @@ func (c *Capture) Start(ctx context.Context) error {
 
 		// For channel consumers, we must copy since the buffer is reused
 		// Check closed flag to prevent send on closed channel
+		// Use safeSend to handle TOCTOU race between check and send
 		if !c.closed.Load() {
-			select {
-			case c.Samples <- copyFloat32Slice(samples):
-			default:
-				// Drop samples if channel is full (consumer too slow)
-			}
+			c.safeSend(copyFloat32Slice(samples))
 		}
 	}
 
@@ -266,6 +263,25 @@ func (c *Capture) Close() error {
 // IsRunning returns true if capture is active
 func (c *Capture) IsRunning() bool {
 	return c.running.Load()
+}
+
+// safeSend attempts to send samples to the channel without blocking.
+// It recovers from panic if the channel is closed between the closed flag check
+// and the actual send (TOCTOU race). This is a rare edge case that can occur
+// during concurrent context cancellation and Close() calls.
+func (c *Capture) safeSend(samples []float32) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel was closed between our check and send - this is expected
+			// during shutdown and can be safely ignored
+		}
+	}()
+
+	select {
+	case c.Samples <- samples:
+	default:
+		// Drop samples if channel is full (consumer too slow)
+	}
 }
 
 // bytesAsFloat32 performs zero-copy conversion of a byte slice to float32 slice.

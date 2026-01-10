@@ -797,3 +797,108 @@ func TestCapture_Close_SetsClosedBeforeChannelClose(t *testing.T) {
 
 	<-done
 }
+
+func TestCapture_SafeSend_RecoverFromClosedChannel(t *testing.T) {
+	// Test that safeSend doesn't panic when channel is closed
+	capture := New(DefaultConfig())
+
+	// Close the channel directly
+	close(capture.Samples)
+
+	// This should not panic - safeSend should recover
+	capture.safeSend([]float32{1.0, 2.0, 3.0})
+
+	// If we get here without panic, test passes
+}
+
+func TestCapture_SafeSend_NormalOperation(t *testing.T) {
+	capture := New(DefaultConfig())
+
+	// Send samples normally
+	capture.safeSend([]float32{1.0, 2.0, 3.0})
+
+	// Verify sample was sent
+	select {
+	case samples := <-capture.Samples:
+		if len(samples) != 3 {
+			t.Errorf("expected 3 samples, got %d", len(samples))
+		}
+	default:
+		t.Error("expected sample to be sent to channel")
+	}
+}
+
+func TestCapture_SafeSend_ChannelFull(t *testing.T) {
+	// Create capture with small channel buffer
+	capture := &Capture{
+		config:  DefaultConfig(),
+		Samples: make(chan []float32, 1), // Buffer of 1
+	}
+
+	// Fill the channel
+	capture.safeSend([]float32{1.0})
+
+	// This should not block - should drop the sample
+	capture.safeSend([]float32{2.0})
+
+	// Verify only first sample is in channel
+	select {
+	case samples := <-capture.Samples:
+		if samples[0] != 1.0 {
+			t.Errorf("expected first sample 1.0, got %f", samples[0])
+		}
+	default:
+		t.Error("expected sample in channel")
+	}
+
+	// Channel should now be empty
+	select {
+	case <-capture.Samples:
+		t.Error("channel should be empty after draining")
+	default:
+		// Expected
+	}
+}
+
+func TestCapture_ContextCancellation_ConcurrentWithClose(t *testing.T) {
+	// Test that concurrent context cancellation and Close() don't race
+	for i := 0; i < 100; i++ {
+		capture := New(DefaultConfig())
+
+		if err := capture.Init(); err != nil {
+			t.Fatalf("Init() error: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Start capture (we expect this to fail without a real device,
+		// but we're testing the cancellation path)
+		startErr := capture.Start(ctx)
+
+		var wg sync.WaitGroup
+
+		// Goroutine 1: Cancel context
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cancel()
+		}()
+
+		// Goroutine 2: Call Close
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = capture.Close()
+		}()
+
+		wg.Wait()
+
+		// Verify final state - should be closed
+		if !capture.closed.Load() {
+			t.Errorf("iteration %d: capture should be closed", i)
+		}
+
+		// If Start failed, that's expected in test environment
+		_ = startErr
+	}
+}
