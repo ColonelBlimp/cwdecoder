@@ -188,6 +188,103 @@ func TestNewDetector_InvalidAGCAttack(t *testing.T) {
 	}
 }
 
+func TestNewDetector_InvalidAGCWarmup(t *testing.T) {
+	g := createTestGoertzel(t)
+	cfg := createTestDetectorConfig()
+	cfg.AGCWarmupBlocks = -1
+
+	_, err := NewDetector(cfg, g)
+	if err != ErrInvalidAGCWarmup {
+		t.Errorf("expected ErrInvalidAGCWarmup, got: %v", err)
+	}
+}
+
+func TestDetector_AGCWarmup_SkipsDetectionDuringWarmup(t *testing.T) {
+	g := createTestGoertzel(t)
+	cfg := createTestDetectorConfig()
+	cfg.AGCWarmupBlocks = 20 // Require 20 blocks of warmup (generous)
+	cfg.Hysteresis = 0       // Disable hysteresis for simpler testing
+	cfg.OverlapPct = 0       // Disable overlap for predictable block counting
+
+	d, err := NewDetector(cfg, g)
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+
+	// Track events
+	var events []ToneEvent
+	var mu sync.Mutex
+	d.SetCallback(func(event ToneEvent) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	})
+
+	// Generate a strong tone signal that would normally trigger detection
+	block := generateSineWave(detectorTestToneFrequency, detectorTestSampleRate, detectorTestBlockSize, 0.8)
+
+	// Process fewer blocks than warmup requires - should not trigger any events
+	// With 0% overlap, each Process(block) = exactly 1 processBlock call
+	for i := 0; i < 15; i++ { // 15 < 20 warmup blocks
+		d.Process(block)
+	}
+
+	mu.Lock()
+	eventsDuringWarmup := len(events)
+	mu.Unlock()
+
+	if eventsDuringWarmup != 0 {
+		t.Errorf("Expected no events during warmup (processed 15 of 20 warmup blocks), got %d", eventsDuringWarmup)
+	}
+
+	// Now process enough to complete warmup and detect
+	for i := 0; i < 10; i++ { // 5 more to complete warmup + 5 for detection
+		d.Process(block)
+	}
+
+	mu.Lock()
+	eventsAfterWarmup := len(events)
+	mu.Unlock()
+
+	if eventsAfterWarmup == 0 {
+		t.Error("Expected events after warmup, got none")
+	}
+}
+
+func TestDetector_AGCWarmup_ZeroWarmupAllowsImmediateDetection(t *testing.T) {
+	g := createTestGoertzel(t)
+	cfg := createTestDetectorConfig()
+	cfg.AGCWarmupBlocks = 0 // No warmup
+	cfg.Hysteresis = 0      // Disable hysteresis
+
+	d, err := NewDetector(cfg, g)
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+
+	// Track events
+	var events []ToneEvent
+	var mu sync.Mutex
+	d.SetCallback(func(event ToneEvent) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	})
+
+	// Generate and process a strong tone signal
+	block := generateSineWave(detectorTestToneFrequency, detectorTestSampleRate, detectorTestBlockSize, 0.8)
+	d.Process(block)
+
+	mu.Lock()
+	eventCount := len(events)
+	mu.Unlock()
+
+	// With zero warmup and zero hysteresis, first block should trigger detection
+	if eventCount == 0 {
+		t.Error("Expected immediate detection with zero warmup, got no events")
+	}
+}
+
 func TestNewDetector_ValidBoundaryValues(t *testing.T) {
 	g := createTestGoertzel(t)
 
@@ -438,8 +535,11 @@ func TestDetector_AGC_NormalizesLowAmplitude(t *testing.T) {
 	g := createTestGoertzel(t)
 	cfg := createTestDetectorConfig()
 	cfg.AGCEnabled = true
+	cfg.AGCWarmupBlocks = 20 // Allow AGC to calibrate during warmup
+	cfg.AGCDecay = 0.99      // Faster decay for testing (100x faster than default)
 	cfg.Hysteresis = 2
 	cfg.Threshold = 0.4
+	cfg.OverlapPct = 0 // Simpler block counting
 
 	d, err := NewDetector(cfg, g)
 	if err != nil {
@@ -452,12 +552,13 @@ func TestDetector_AGC_NormalizesLowAmplitude(t *testing.T) {
 	})
 
 	// Low amplitude signal - without AGC this would be below threshold
-	samples := generateSineWave(detectorTestToneFrequency, detectorTestSampleRate, detectorTestBlockSize*20, 0.1)
+	// Process enough samples to complete warmup (20 blocks) + detection (10 blocks)
+	samples := generateSineWave(detectorTestToneFrequency, detectorTestSampleRate, detectorTestBlockSize*35, 0.1)
 	d.Process(samples)
 
-	// AGC should normalize and detect the tone
+	// AGC should normalize and detect the tone after warmup
 	if eventCount == 0 {
-		t.Error("AGC should normalize low amplitude signal and detect tone")
+		t.Error("AGC should normalize low amplitude signal and detect tone after warmup")
 	}
 }
 

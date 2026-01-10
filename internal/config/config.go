@@ -37,6 +37,8 @@ agc_decay: 0.9995       # AGC peak decay rate per sample (0.999-0.99999)
                         # At 48kHz: 0.9995 gives ~100ms decay time constant
 agc_attack: 0.1         # AGC attack rate (0.0-1.0), how fast to respond to louder signals
                         # Higher = faster response, Lower = more gradual
+agc_warmup_blocks: 10   # Number of blocks to process before enabling detection
+                        # Allows AGC to calibrate to signal level, preventing false triggers
 
 # Timing
 wpm: 15                 # Initial WPM estimate
@@ -63,11 +65,12 @@ type Settings struct {
 	OverlapPct    int     `mapstructure:"overlap_pct"`
 
 	// Detection thresholds
-	Threshold  float64 `mapstructure:"threshold"`
-	Hysteresis int     `mapstructure:"hysteresis"`
-	AGCEnabled bool    `mapstructure:"agc_enabled"`
-	AGCDecay   float64 `mapstructure:"agc_decay"`
-	AGCAttack  float64 `mapstructure:"agc_attack"`
+	Threshold       float64 `mapstructure:"threshold"`
+	Hysteresis      int     `mapstructure:"hysteresis"`
+	AGCEnabled      bool    `mapstructure:"agc_enabled"`
+	AGCDecay        float64 `mapstructure:"agc_decay"`
+	AGCAttack       float64 `mapstructure:"agc_attack"`
+	AGCWarmupBlocks int     `mapstructure:"agc_warmup_blocks"`
 
 	// Timing
 	WPM            int  `mapstructure:"wpm"`

@@ -18,6 +18,8 @@ var (
 	ErrInvalidAGCDecay = errors.New("agc decay must be between 0.0 and 1.0")
 	// ErrInvalidAGCAttack indicates AGC attack must be between 0 and 1
 	ErrInvalidAGCAttack = errors.New("agc attack must be between 0.0 and 1.0")
+	// ErrInvalidAGCWarmup indicates AGC warmup blocks must be non-negative
+	ErrInvalidAGCWarmup = errors.New("agc warmup blocks must be non-negative")
 	// ErrGoertzelRequired indicates Goertzel instance is required
 	ErrGoertzelRequired = errors.New("goertzel instance is required")
 )
@@ -55,6 +57,9 @@ type DetectorConfig struct {
 	AGCDecay float64
 	// AGCAttack is how fast to respond to louder signals (from config: agc_attack)
 	AGCAttack float64
+	// AGCWarmupBlocks is the number of blocks to process before enabling detection (from config: agc_warmup_blocks)
+	// Allows AGC to calibrate to signal level, preventing false triggers on startup
+	AGCWarmupBlocks int
 }
 
 // Detector detects CW tones in audio samples using the Goertzel algorithm.
@@ -70,7 +75,8 @@ type Detector struct {
 	hopSize       int // samples to advance between blocks
 
 	// AGC state
-	agcPeak float64
+	agcPeak       float64
+	warmupCounter int // blocks processed, detection disabled until >= AGCWarmupBlocks
 
 	// Hysteresis state
 	toneState       bool // current confirmed tone state
@@ -104,6 +110,9 @@ func NewDetector(cfg DetectorConfig, goertzel *Goertzel) (*Detector, error) {
 	if cfg.AGCAttack < 0 || cfg.AGCAttack > 1 {
 		return nil, ErrInvalidAGCAttack
 	}
+	if cfg.AGCWarmupBlocks < 0 {
+		return nil, ErrInvalidAGCWarmup
+	}
 
 	blockSize := goertzel.BlockSize()
 	overlapSize := (blockSize * cfg.OverlapPct) / 100
@@ -116,7 +125,8 @@ func NewDetector(cfg DetectorConfig, goertzel *Goertzel) (*Detector, error) {
 		overlapBuffer: make([]float32, 0, blockSize),
 		overlapSize:   overlapSize,
 		hopSize:       hopSize,
-		agcPeak:       0.001, // Small initial value to avoid division by zero
+		agcPeak:       1.0, // Initialize to 1.0 to prevent false triggers during warmup
+		warmupCounter: 0,
 		toneState:     false,
 		pendingState:  false,
 	}, nil
@@ -158,7 +168,25 @@ func (d *Detector) processBlock(block []float32) {
 	// Compute raw magnitude using Goertzel
 	magnitude := d.goertzel.MagnitudeNoAlloc(block)
 
-	// Apply AGC if enabled
+	// During warmup, calibrate AGC to actual signal level without triggering detection
+	if d.warmupCounter < d.config.AGCWarmupBlocks {
+		d.warmupCounter++
+		if d.config.AGCEnabled && magnitude > 0.001 {
+			// During warmup, directly track the maximum signal level for calibration
+			// This ensures AGC is properly calibrated before detection starts
+			if magnitude > d.agcPeak {
+				d.agcPeak = magnitude
+			} else if d.warmupCounter == 1 {
+				// On first block, initialize to actual signal level
+				d.agcPeak = magnitude
+			}
+			// After first block, keep peak at max seen during warmup
+			// (no decay during warmup to ensure stable calibration)
+		}
+		return
+	}
+
+	// Apply AGC if enabled (normal operation after warmup)
 	if d.config.AGCEnabled {
 		magnitude = d.applyAGC(magnitude)
 	}
