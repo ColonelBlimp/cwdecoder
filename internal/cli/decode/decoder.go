@@ -6,7 +6,7 @@ import (
 )
 
 type Decoder struct {
-	cfg config.Config
+	cfg config.Settings
 
 	ctx    *malgo.AllocatedContext
 	device *malgo.Device
@@ -17,7 +17,7 @@ type AudioDevice struct {
 
 type AudioDeviceSlice []AudioDevice
 
-func NewDecoder(cfg config.Config) (*Decoder, error) {
+func NewDecoder(cfg config.Settings) (*Decoder, error) {
 	return nil, nil
 }
 
