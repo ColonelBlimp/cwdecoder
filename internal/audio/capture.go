@@ -121,13 +121,34 @@ func (c *Capture) Start(ctx context.Context) error {
 		return ErrAlreadyRunning
 	}
 
+	// Validate and extract all context-dependent data while holding the lock
+	// This avoids releasing and re-acquiring the mutex (lock ordering violation)
 	c.mu.Lock()
 	if c.ctx == nil {
 		c.mu.Unlock()
 		c.running.Store(false)
 		return ErrNotInitialized
 	}
-	audioCtx := c.ctx.Context // capture for use after unlock
+
+	audioCtx := c.ctx.Context
+
+	// Get device list while holding lock if we need a specific device
+	var deviceID unsafe.Pointer
+	if c.config.DeviceIndex >= 0 {
+		devices, err := c.ctx.Devices(malgo.Capture)
+		if err != nil {
+			c.mu.Unlock()
+			c.running.Store(false)
+			return fmt.Errorf("enumerate devices: %w", err)
+		}
+		if c.config.DeviceIndex >= len(devices) {
+			c.mu.Unlock()
+			c.running.Store(false)
+			return fmt.Errorf("device index %d out of range (have %d devices)",
+				c.config.DeviceIndex, len(devices))
+		}
+		deviceID = devices[c.config.DeviceIndex].ID.Pointer()
+	}
 	c.mu.Unlock()
 
 	deviceConfig := malgo.DeviceConfig{
@@ -140,19 +161,9 @@ func (c *Capture) Start(ctx context.Context) error {
 		},
 	}
 
-	// Select specific device if requested - set before initialization
-	if c.config.DeviceIndex >= 0 {
-		devices, err := c.ListDevices()
-		if err != nil {
-			c.running.Store(false)
-			return err
-		}
-		if c.config.DeviceIndex >= len(devices) {
-			c.running.Store(false)
-			return fmt.Errorf("device index %d out of range (have %d devices)",
-				c.config.DeviceIndex, len(devices))
-		}
-		deviceConfig.Capture.DeviceID = devices[c.config.DeviceIndex].ID.Pointer()
+	// Set device ID if a specific device was requested
+	if deviceID != nil {
+		deviceConfig.Capture.DeviceID = deviceID
 	}
 
 	// Callback receives audio data
@@ -187,15 +198,19 @@ func (c *Capture) Start(ctx context.Context) error {
 		return fmt.Errorf("init device: %w", err)
 	}
 
-	if err := device.Start(); err != nil {
-		device.Uninit()
-		c.running.Store(false)
-		return fmt.Errorf("start device: %w", err)
-	}
-
+	// Store device immediately so it can be cleaned up if Start() fails or panics
 	c.mu.Lock()
 	c.device = device
 	c.mu.Unlock()
+
+	if err := device.Start(); err != nil {
+		c.mu.Lock()
+		c.device.Uninit()
+		c.device = nil
+		c.mu.Unlock()
+		c.running.Store(false)
+		return fmt.Errorf("start device: %w", err)
+	}
 
 	// Wait for context cancellation
 	go func() {
