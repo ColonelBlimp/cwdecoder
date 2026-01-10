@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"unsafe"
 
@@ -196,7 +197,9 @@ func (c *Capture) Start(ctx context.Context) error {
 	// Wait for context cancellation
 	go func() {
 		<-ctx.Done()
-		_ = c.Stop()
+		if err := c.Stop(); err != nil && !errors.Is(err, ErrNotRunning) {
+			log.Printf("audio: stop on context cancel: %v", err)
+		}
 	}()
 
 	return nil
@@ -212,7 +215,9 @@ func (c *Capture) Stop() error {
 	}
 
 	if c.device != nil {
-		_ = c.device.Stop()
+		if err := c.device.Stop(); err != nil {
+			log.Printf("audio: device stop: %v", err)
+		}
 		c.device.Uninit()
 		c.device = nil
 	}
@@ -227,7 +232,9 @@ func (c *Capture) Close() error {
 	defer c.mu.Unlock()
 
 	if c.running && c.device != nil {
-		_ = c.device.Stop()
+		if err := c.device.Stop(); err != nil {
+			log.Printf("audio: device stop on close: %v", err)
+		}
 		c.device.Uninit()
 		c.device = nil
 		c.running = false
