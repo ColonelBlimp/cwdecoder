@@ -248,7 +248,51 @@ func (d *Detector) applyAGC(magnitude float64) float64 {
 	return normalized
 }
 
-// updateHysteresis applies hysteresis to debounce tone detection
+// updateHysteresis applies hysteresis to debounce tone detection.
+//
+// Hysteresis State Machine
+// ========================
+//
+// The detector uses hysteresis to prevent rapid toggling (debouncing).
+// A state change only occurs after the new condition persists for
+// `Hysteresis` consecutive blocks.
+//
+//	                     tonePresent=true repeatedly
+//	                     (hysteresisCount >= Hysteresis)
+//	┌──────────────┐ ─────────────────────────────────► ┌──────────────┐
+//	│              │                                    │              │
+//	│   TONE_OFF   │                                    │   TONE_ON    │
+//	│ (toneState=  │                                    │ (toneState=  │
+//	│    false)    │                                    │    true)     │
+//	│              │ ◄───────────────────────────────── │              │
+//	└──────────────┘   tonePresent=false repeatedly     └──────────────┘
+//	       │           (hysteresisCount >= Hysteresis)         │
+//	       │                                                   │
+//	       └───────────────────┬───────────────────────────────┘
+//	                           │
+//	                           ▼
+//	              If tonePresent == toneState:
+//	                  → Reset hysteresisCount to 0
+//	                  → Stay in current state
+//
+// Transition Logic:
+//   - While in TONE_OFF: detecting tone increments counter toward TONE_ON
+//   - While in TONE_ON: no tone increments counter toward TONE_OFF
+//   - Matching condition resets counter to 0 (state is stable)
+//   - Transition fires ToneCallback with duration since last transition
+//
+// Example with Hysteresis=3:
+//
+//	Block:   1   2   3   4   5   6   7   8   9  10  11  12
+//	Tone:    -   T   T   T   T   T   -   -   -   T   -   -
+//	Count:   0   1   2   3   0   0   1   2   3   0   1   2
+//	State:  OFF OFF OFF  ON  ON  ON  ON  ON OFF OFF OFF OFF
+//	                     ↑               ↑
+//	               Transition      Transition
+//	               (emit ON)       (emit OFF)
+//
+// The pendingStartTime captures when the pending state began, ensuring
+// accurate duration measurement (not when hysteresis confirmed the change).
 func (d *Detector) updateHysteresis(tonePresent bool, magnitude float64) {
 	now := time.Now()
 
