@@ -7,6 +7,19 @@ import (
 	"time"
 )
 
+const (
+	// AGCInitialPeak is the initial AGC peak value to prevent false triggers during warmup
+	AGCInitialPeak = 1.0
+	// AGCMinPeak is the minimum AGC peak value to avoid division by zero
+	AGCMinPeak = 0.001
+	// AGCMinMagnitude is the minimum magnitude threshold for AGC calibration during warmup
+	AGCMinMagnitude = 0.001
+	// AGCMaxNormalized is the maximum normalized magnitude after AGC (clamped to 0-1 range)
+	AGCMaxNormalized = 1.0
+	// OverlapPctMax is the maximum overlap percentage (exclusive)
+	OverlapPctMax = 100
+)
+
 var (
 	// ErrInvalidThreshold indicates threshold must be between 0 and 1
 	ErrInvalidThreshold = errors.New("threshold must be between 0.0 and 1.0")
@@ -102,7 +115,7 @@ func NewDetector(cfg DetectorConfig, goertzel *Goertzel) (*Detector, error) {
 	if cfg.Hysteresis < 0 {
 		return nil, ErrInvalidHysteresis
 	}
-	if cfg.OverlapPct < 0 || cfg.OverlapPct >= 100 {
+	if cfg.OverlapPct < 0 || cfg.OverlapPct >= OverlapPctMax {
 		return nil, ErrInvalidOverlap
 	}
 	if cfg.AGCDecay < 0 || cfg.AGCDecay > 1 {
@@ -126,7 +139,7 @@ func NewDetector(cfg DetectorConfig, goertzel *Goertzel) (*Detector, error) {
 		overlapBuffer: make([]float32, 0, blockSize),
 		overlapSize:   overlapSize,
 		hopSize:       hopSize,
-		agcPeak:       1.0, // Initialize to 1.0 to prevent false triggers during warmup
+		agcPeak:       AGCInitialPeak, // Initialize to prevent false triggers during warmup
 		warmupCounter: 0,
 		toneState:     false,
 		pendingState:  false,
@@ -181,7 +194,7 @@ func (d *Detector) processBlock(block []float32) {
 	// During warmup, calibrate AGC to actual signal level without triggering detection
 	if d.warmupCounter < d.config.AGCWarmupBlocks {
 		d.warmupCounter++
-		if d.config.AGCEnabled && magnitude > 0.001 {
+		if d.config.AGCEnabled && magnitude > AGCMinMagnitude {
 			// During warmup, directly track the maximum signal level for calibration
 			// This ensures AGC is properly calibrated before detection starts
 			if magnitude > d.agcPeak {
@@ -220,16 +233,16 @@ func (d *Detector) applyAGC(magnitude float64) float64 {
 	}
 
 	// Ensure minimum peak to avoid division issues
-	if d.agcPeak < 0.001 {
-		d.agcPeak = 0.001
+	if d.agcPeak < AGCMinPeak {
+		d.agcPeak = AGCMinPeak
 	}
 
 	// Normalize magnitude by peak
 	normalized := magnitude / d.agcPeak
 
 	// Clamp to 0-1 range
-	if normalized > 1.0 {
-		normalized = 1.0
+	if normalized > AGCMaxNormalized {
+		normalized = AGCMaxNormalized
 	}
 
 	return normalized
@@ -308,7 +321,7 @@ func (d *Detector) AGCPeak() float64 {
 // Reset resets the detector state
 func (d *Detector) Reset() {
 	d.overlapBuffer = d.overlapBuffer[:0]
-	d.agcPeak = 1.0 // Match initial value from NewDetector
+	d.agcPeak = AGCInitialPeak // Match initial value from NewDetector
 	d.warmupCounter = 0
 	d.toneState = false
 	d.pendingState = false

@@ -13,6 +13,14 @@ import (
 	"github.com/gen2brain/malgo"
 )
 
+const (
+	// SampleChannelBufferSize is the capacity of the Samples channel.
+	// Provides buffering between audio callback and consumer.
+	SampleChannelBufferSize = 64
+	// BytesPerFloat32 is the number of bytes in a float32 sample
+	BytesPerFloat32 = 4
+)
+
 var (
 	ErrNotInitialized = errors.New("audio capture not initialized")
 	ErrAlreadyRunning = errors.New("audio capture already running")
@@ -63,7 +71,7 @@ type Capture struct {
 func New(cfg Config) *Capture {
 	return &Capture{
 		config:  cfg,
-		Samples: make(chan []float32, 64),
+		Samples: make(chan []float32, SampleChannelBufferSize),
 	}
 }
 
@@ -303,10 +311,10 @@ func (c *Capture) safeSend(samples []float32) {
 // WARNING: The returned slice shares memory with the input - do not use after
 // the input buffer is reused or freed.
 func bytesAsFloat32(data []byte) []float32 {
-	if len(data) < 4 {
+	if len(data) < BytesPerFloat32 {
 		return nil
 	}
-	numSamples := len(data) / 4
+	numSamples := len(data) / BytesPerFloat32
 	return unsafe.Slice((*float32)(unsafe.Pointer(&data[0])), numSamples)
 }
 
@@ -324,11 +332,11 @@ func copyFloat32Slice(src []float32) []float32 {
 // bytesToFloat32 converts raw bytes to float32 samples (allocates new slice).
 // Prefer bytesAsFloat32 for zero-copy access in hot paths.
 func bytesToFloat32(data []byte) []float32 {
-	numSamples := len(data) / 4
+	numSamples := len(data) / BytesPerFloat32
 	samples := make([]float32, numSamples)
 
 	for i := 0; i < numSamples; i++ {
-		offset := i * 4
+		offset := i * BytesPerFloat32
 		// Little-endian float32
 		bits := uint32(data[offset]) |
 			uint32(data[offset+1])<<8 |

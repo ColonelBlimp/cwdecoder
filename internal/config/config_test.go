@@ -46,6 +46,7 @@ func TestInit_WithDefaults(t *testing.T) {
 		{"threshold", 0.4},
 		{"hysteresis", 5},
 		{"agc_enabled", true},
+		{"agc_warmup_blocks", 10},
 		{"wpm", 15},
 		{"adaptive_timing", true},
 		{"buffer_size", 1024},

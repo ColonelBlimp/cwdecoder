@@ -11,8 +11,34 @@ import (
 )
 
 const (
-	AppName       = "cwdecoder"
-	ConfigType    = "yaml"
+	AppName    = "cwdecoder"
+	ConfigType = "yaml"
+
+	// Validation range constants
+	MinSampleRate    = 8000
+	MaxSampleRate    = 192000
+	MinChannels      = 1
+	MaxChannels      = 2
+	MinBufferSize    = 64
+	MaxBufferSize    = 8192
+	MinToneFrequency = 100
+	MaxToneFrequency = 3000
+	MinBlockSize     = 32
+	MaxBlockSize     = 4096
+	MinOverlapPct    = 0
+	MaxOverlapPct    = 99
+	MinThreshold     = 0.0
+	MaxThreshold     = 1.0
+	MinHysteresis    = 1
+	MaxHysteresis    = 50
+	MinAGCDecay      = 0.99
+	MaxAGCDecay      = 0.99999
+	MinAGCAttack     = 0.0
+	MaxAGCAttack     = 1.0
+	MinWPM           = 5
+	MaxWPM           = 60
+	NyquistDivisor   = 2.0 // Nyquist frequency = sample_rate / 2
+
 	DefaultConfig = `# CW Decoder Configuration
 
 # Audio device settings
@@ -98,6 +124,7 @@ func Init() error {
 	viper.SetDefault("agc_enabled", true)
 	viper.SetDefault("agc_decay", 0.9995)
 	viper.SetDefault("agc_attack", 0.1)
+	viper.SetDefault("agc_warmup_blocks", 10)
 	viper.SetDefault("wpm", 15)
 	viper.SetDefault("adaptive_timing", true)
 	viper.SetDefault("debug", false)
@@ -174,14 +201,14 @@ func (s *Settings) Validate() error {
 	var errs []error
 
 	// Audio device settings
-	if s.SampleRate < 8000 || s.SampleRate > 192000 {
-		errs = append(errs, fmt.Errorf("sample_rate must be between 8000 and 192000 Hz, got %v", s.SampleRate))
+	if s.SampleRate < MinSampleRate || s.SampleRate > MaxSampleRate {
+		errs = append(errs, fmt.Errorf("sample_rate must be between %d and %d Hz, got %v", MinSampleRate, MaxSampleRate, s.SampleRate))
 	}
-	if s.Channels < 1 || s.Channels > 2 {
-		errs = append(errs, fmt.Errorf("channels must be 1 or 2, got %d", s.Channels))
+	if s.Channels < MinChannels || s.Channels > MaxChannels {
+		errs = append(errs, fmt.Errorf("channels must be %d or %d, got %d", MinChannels, MaxChannels, s.Channels))
 	}
-	if s.BufferSize < 64 || s.BufferSize > 8192 {
-		errs = append(errs, fmt.Errorf("buffer_size must be between 64 and 8192, got %d", s.BufferSize))
+	if s.BufferSize < MinBufferSize || s.BufferSize > MaxBufferSize {
+		errs = append(errs, fmt.Errorf("buffer_size must be between %d and %d, got %d", MinBufferSize, MaxBufferSize, s.BufferSize))
 	}
 	// Buffer size should be power of 2 for optimal FFT/Goertzel performance
 	if s.BufferSize&(s.BufferSize-1) != 0 {
@@ -189,36 +216,36 @@ func (s *Settings) Validate() error {
 	}
 
 	// Tone detection
-	if s.ToneFrequency < 100 || s.ToneFrequency > 3000 {
-		errs = append(errs, fmt.Errorf("tone_frequency must be between 100 and 3000 Hz, got %v", s.ToneFrequency))
+	if s.ToneFrequency < MinToneFrequency || s.ToneFrequency > MaxToneFrequency {
+		errs = append(errs, fmt.Errorf("tone_frequency must be between %d and %d Hz, got %v", MinToneFrequency, MaxToneFrequency, s.ToneFrequency))
 	}
-	if s.BlockSize < 32 || s.BlockSize > 4096 {
-		errs = append(errs, fmt.Errorf("block_size must be between 32 and 4096, got %d", s.BlockSize))
+	if s.BlockSize < MinBlockSize || s.BlockSize > MaxBlockSize {
+		errs = append(errs, fmt.Errorf("block_size must be between %d and %d, got %d", MinBlockSize, MaxBlockSize, s.BlockSize))
 	}
 	if s.BlockSize&(s.BlockSize-1) != 0 {
 		errs = append(errs, fmt.Errorf("block_size should be a power of 2, got %d", s.BlockSize))
 	}
-	if s.OverlapPct < 0 || s.OverlapPct > 99 {
-		errs = append(errs, fmt.Errorf("overlap_pct must be between 0 and 99, got %d", s.OverlapPct))
+	if s.OverlapPct < MinOverlapPct || s.OverlapPct > MaxOverlapPct {
+		errs = append(errs, fmt.Errorf("overlap_pct must be between %d and %d, got %d", MinOverlapPct, MaxOverlapPct, s.OverlapPct))
 	}
 
 	// Detection thresholds
-	if s.Threshold < 0.0 || s.Threshold > 1.0 {
-		errs = append(errs, fmt.Errorf("threshold must be between 0.0 and 1.0, got %v", s.Threshold))
+	if s.Threshold < MinThreshold || s.Threshold > MaxThreshold {
+		errs = append(errs, fmt.Errorf("threshold must be between %.1f and %.1f, got %v", MinThreshold, MaxThreshold, s.Threshold))
 	}
-	if s.Hysteresis < 1 || s.Hysteresis > 50 {
-		errs = append(errs, fmt.Errorf("hysteresis must be between 1 and 50, got %d", s.Hysteresis))
+	if s.Hysteresis < MinHysteresis || s.Hysteresis > MaxHysteresis {
+		errs = append(errs, fmt.Errorf("hysteresis must be between %d and %d, got %d", MinHysteresis, MaxHysteresis, s.Hysteresis))
 	}
-	if s.AGCDecay < 0.99 || s.AGCDecay > 0.99999 {
-		errs = append(errs, fmt.Errorf("agc_decay must be between 0.99 and 0.99999, got %v", s.AGCDecay))
+	if s.AGCDecay < MinAGCDecay || s.AGCDecay > MaxAGCDecay {
+		errs = append(errs, fmt.Errorf("agc_decay must be between %.2f and %.5f, got %v", MinAGCDecay, MaxAGCDecay, s.AGCDecay))
 	}
-	if s.AGCAttack < 0.0 || s.AGCAttack > 1.0 {
-		errs = append(errs, fmt.Errorf("agc_attack must be between 0.0 and 1.0, got %v", s.AGCAttack))
+	if s.AGCAttack < MinAGCAttack || s.AGCAttack > MaxAGCAttack {
+		errs = append(errs, fmt.Errorf("agc_attack must be between %.1f and %.1f, got %v", MinAGCAttack, MaxAGCAttack, s.AGCAttack))
 	}
 
 	// Timing
-	if s.WPM < 5 || s.WPM > 60 {
-		errs = append(errs, fmt.Errorf("wpm must be between 5 and 60, got %d", s.WPM))
+	if s.WPM < MinWPM || s.WPM > MaxWPM {
+		errs = append(errs, fmt.Errorf("wpm must be between %d and %d, got %d", MinWPM, MaxWPM, s.WPM))
 	}
 
 	// Validate audio format
@@ -237,8 +264,8 @@ func (s *Settings) Validate() error {
 	}
 
 	// Nyquist check: tone frequency must be less than half the sample rate
-	if s.ToneFrequency >= s.SampleRate/2 {
-		errs = append(errs, fmt.Errorf("tone_frequency (%v Hz) must be less than Nyquist frequency (%v Hz)", s.ToneFrequency, s.SampleRate/2))
+	if s.ToneFrequency >= s.SampleRate/NyquistDivisor {
+		errs = append(errs, fmt.Errorf("tone_frequency (%v Hz) must be less than Nyquist frequency (%v Hz)", s.ToneFrequency, s.SampleRate/NyquistDivisor))
 	}
 
 	if len(errs) > 0 {
