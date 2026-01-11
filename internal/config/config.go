@@ -2,6 +2,7 @@
 package config
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/spf13/viper"
 )
+
+//go:embed default_config.yaml
+var DefaultConfig string
 
 const (
 	AppName    = "cwdecoder"
@@ -48,65 +52,6 @@ const (
 	MaxInterCharBoundary = 4.0  // Must be < char-word boundary
 	MinCharWordBoundary  = 3.0  // Must be > inter-char boundary
 	MaxCharWordBoundary  = 10.0 // Reasonable upper limit
-
-	DefaultConfig = `# CW Decoder Configuration
-
-# Audio device settings
-audio_device: "hw:1,0"  # ALSA device (use 'arecord -l' to find)
-device_index: -1        # -1 for default device
-sample_rate: 48000      # Audio sample rate in Hz
-channels: 1             # Number of channels (1=mono)
-format: "S16_LE"        # Audio format (S16_LE = 16-bit signed little-endian)
-buffer_size: 1024       # Audio buffer size
-
-# Tone detection
-tone_frequency: 600     # CW tone frequency in Hz
-block_size: 512         # Goertzel block size (samples per detection window)
-overlap_pct: 50         # Block overlap percentage (0-99), higher = smoother but more CPU
-
-# Detection thresholds
-threshold: 0.4          # Detection threshold (0.0-1.0), tone magnitude must exceed this
-hysteresis: 5           # Consecutive blocks required to confirm state change (reduces noise)
-agc_enabled: true       # Enable automatic gain control (normalizes input levels)
-agc_decay: 0.9995       # AGC peak decay rate per sample (0.999-0.99999)
-                        # Lower = faster decay (~0.999 = 20ms), Higher = slower (~0.9999 = 200ms)
-                        # At 48kHz: 0.9995 gives ~100ms decay time constant
-agc_attack: 0.1         # AGC attack rate (0.0-1.0), how fast to respond to louder signals
-                        # Higher = faster response, Lower = more gradual
-agc_warmup_blocks: 10   # Number of blocks to process before enabling detection
-                        # Allows AGC to calibrate to signal level, preventing false triggers
-
-# CW Timing
-wpm: 15                 # Initial WPM estimate (5-60)
-adaptive_timing: true   # Adapt to sender's speed automatically
-adaptive_smoothing: 0.1 # EMA smoothing factor for timing adaptation (0.0-1.0)
-                        # Higher = faster adaptation to speed changes
-                        # Lower = more stable, resistant to timing errors
-dit_dah_boundary: 2.0   # Threshold ratio between dit and dah (typically 2.0)
-                        # Tone > (dit_duration * dit_dah_boundary) is classified as dah
-inter_char_boundary: 2.0 # Threshold ratio for inter-character space detection (1.5-4.0)
-                        # Space > (dit_duration * inter_char_boundary) triggers character emission
-                        # ITU: intra-char=1 dit, inter-char=3 dits; 2.0 is midpoint
-char_word_boundary: 5.0 # Threshold ratio between character and word space (3.0-10.0)
-                        # Space > (dit_duration * char_word_boundary) is word space
-                        # ITU: inter-char=3 dits, word=7 dits; 5.0 is midpoint
-farnsworth_wpm: 0       # Effective WPM for character spacing (0 = same as wpm)
-                        # Set lower than wpm to stretch spacing for easier copy
-
-# Adaptive Pattern Matching
-adaptive_pattern_enabled: true  # Enable dictionary-based pattern matching
-                                # Recognizes common CW words (CQ, DE, 73, Q-codes, etc.)
-                                # and auto-adjusts timing for better accuracy
-adaptive_min_confidence: 0.7    # Minimum confidence score for pattern match (0.0-1.0)
-                                # Higher = fewer false matches, lower = more corrections
-adaptive_adjustment_rate: 0.1   # How fast to adjust timing based on patterns (0.0-1.0)
-                                # Higher = faster adjustment, lower = more gradual
-adaptive_min_matches: 3         # Number of pattern matches before adjusting timing
-                                # Prevents single lucky matches from changing settings
-
-# Output
-debug: false            # Enable debug output
-`
 )
 
 // Settings holds all application configuration
