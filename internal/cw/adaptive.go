@@ -43,38 +43,47 @@ type MorsePattern struct {
 }
 
 // CommonPatterns contains frequently used CW words and phrases
+// Break indices are 0-based positions where character boundaries occur (after that element)
 var CommonPatterns = []MorsePattern{
-	// High priority - very common
+	// High priority - very common multi-character patterns only
+	// CQ = -.-. --.- (C=dah dit dah dit, Q=dah dah dit dah)
 	{Text: "CQ", Elements: []bool{true, false, true, false, true, true, false, true}, Breaks: []int{3}, Priority: 10},
+	// DE = -.. . (D=dah dit dit, E=dit)
 	{Text: "DE", Elements: []bool{true, false, false, false}, Breaks: []int{2}, Priority: 10},
-	{Text: "K", Elements: []bool{true, false, true}, Breaks: []int{}, Priority: 9},
+	// 73 = --... ...-- (7=dah dah dit dit dit, 3=dit dit dit dah dah)
 	{Text: "73", Elements: []bool{true, true, false, false, false, false, false, false, true, true}, Breaks: []int{4}, Priority: 9},
-	{Text: "88", Elements: []bool{true, true, true, false, false, true, true, true, false, false}, Breaks: []int{4}, Priority: 8},
-	// 5NN = ..... -. -. (common signal report meaning 599)
+	// 5NN = ..... -. -. (5=dit dit dit dit dit, N=dah dit, N=dah dit)
 	{Text: "5NN", Elements: []bool{false, false, false, false, false, true, false, true, false}, Breaks: []int{4, 6}, Priority: 9},
+	// 599 = ..... ----. ----.  (5=....., 9=----.)
+	{Text: "599", Elements: []bool{false, false, false, false, false, true, true, true, true, false, true, true, true, true, false}, Breaks: []int{4, 9}, Priority: 8},
 
-	// Q codes
+	// Q codes - Q = --.- (4 elements)
+	// QTH = --.- - .... (Q=dah dah dit dah, T=dah, H=dit dit dit dit)
 	{Text: "QTH", Elements: []bool{true, true, false, true, true, false, false, false, false}, Breaks: []int{3, 4}, Priority: 7},
-	{Text: "QSL", Elements: []bool{true, true, false, true, false, false, false, false, true, false, false}, Breaks: []int{3, 6}, Priority: 7},
-	{Text: "QRZ", Elements: []bool{true, true, false, true, false, true, false, true, true, false, false}, Breaks: []int{3, 5}, Priority: 7},
+	// QRZ = --.- .-. --.. (Q=dah dah dit dah, R=dit dah dit, Z=dah dah dit dit)
+	{Text: "QRZ", Elements: []bool{true, true, false, true, false, true, false, true, true, false, false}, Breaks: []int{3, 6}, Priority: 7},
+	// QSO = --.- ... --- (Q=dah dah dit dah, S=dit dit dit, O=dah dah dah)
 	{Text: "QSO", Elements: []bool{true, true, false, true, false, false, false, true, true, true}, Breaks: []int{3, 6}, Priority: 7},
-	{Text: "QRM", Elements: []bool{true, true, false, true, false, true, false, true, true}, Breaks: []int{3, 5}, Priority: 6},
-	{Text: "QRN", Elements: []bool{true, true, false, true, false, true, false, true, false}, Breaks: []int{3, 5}, Priority: 6},
-	{Text: "QRS", Elements: []bool{true, true, false, true, false, true, false, false, false}, Breaks: []int{3, 5}, Priority: 6},
+	// QSL = --.- ... .-.. (Q=dah dah dit dah, S=dit dit dit, L=dit dah dit dit)
+	{Text: "QSL", Elements: []bool{true, true, false, true, false, false, false, false, true, false, false}, Breaks: []int{3, 6}, Priority: 7},
 
-	// Common words
-	{Text: "TEST", Elements: []bool{true, false, false, false, false, true}, Breaks: []int{0, 1, 3}, Priority: 8},
+	// Common words - only multi-character patterns
+	// TU = - ..- (T=dah, U=dit dit dah)
 	{Text: "TU", Elements: []bool{true, false, false, true}, Breaks: []int{0}, Priority: 8},
-	{Text: "TNX", Elements: []bool{true, true, false, true, false, false, true}, Breaks: []int{0, 2}, Priority: 7},
+	// GM = --. -- (G=dah dah dit, M=dah dah)
+	{Text: "GM", Elements: []bool{true, true, false, true, true}, Breaks: []int{2}, Priority: 7},
+	// GA = --. .- (G=dah dah dit, A=dit dah)
+	{Text: "GA", Elements: []bool{true, true, false, false, true}, Breaks: []int{2}, Priority: 7},
+	// GE = --. . (G=dah dah dit, E=dit)
+	{Text: "GE", Elements: []bool{true, true, false, false}, Breaks: []int{2}, Priority: 7},
+	// UR = ..- .-. (U=dit dit dah, R=dit dah dit)
 	{Text: "UR", Elements: []bool{false, false, true, false, true, false}, Breaks: []int{2}, Priority: 6},
-	{Text: "RST", Elements: []bool{false, true, false, false, false, false, true}, Breaks: []int{2, 5}, Priority: 7},
-	{Text: "NAME", Elements: []bool{true, false, false, true, true, true, false}, Breaks: []int{1, 3, 5}, Priority: 5},
-	{Text: "HR", Elements: []bool{false, false, false, false, false, true, false}, Breaks: []int{3}, Priority: 5},
-	{Text: "ES", Elements: []bool{false, false, false, false}, Breaks: []int{0}, Priority: 6},
+	// FB = ..-. -... (F=dit dit dah dit, B=dah dit dit dit)
 	{Text: "FB", Elements: []bool{false, false, true, false, true, false, false, false}, Breaks: []int{3}, Priority: 6},
-	{Text: "GM", Elements: []bool{true, true, false, true, true}, Breaks: []int{1}, Priority: 5},
-	{Text: "GA", Elements: []bool{true, true, false, false, true}, Breaks: []int{1}, Priority: 5},
-	{Text: "GE", Elements: []bool{true, true, false, false}, Breaks: []int{1}, Priority: 5},
+	// ES = . ... (E=dit, S=dit dit dit)
+	{Text: "ES", Elements: []bool{false, false, false, false}, Breaks: []int{0}, Priority: 6},
+	// HR = .... .-. (H=dit dit dit dit, R=dit dah dit)
+	{Text: "HR", Elements: []bool{false, false, false, false, false, true, false}, Breaks: []int{3}, Priority: 5},
 }
 
 // PatternMatch represents a potential pattern match in the element buffer
@@ -237,35 +246,31 @@ func (a *AdaptiveDecoder) findBestMatch(elements []Element) *PatternMatch {
 
 // matchPattern checks if elements match a pattern and calculates confidence
 func (a *AdaptiveDecoder) matchPattern(pattern *MorsePattern, elements []Element) *PatternMatch {
-	if len(elements) < len(pattern.Elements) {
+	// Require exact element count match for reliable pattern matching
+	if len(elements) != len(pattern.Elements) {
 		return nil
 	}
 
-	// Check element types match (dit/dah)
-	matchCount := 0
+	// Check element types match (dit/dah) - require 100% match
 	for i, isDah := range pattern.Elements {
-		if i >= len(elements) {
-			break
+		if elements[i].IsDah != isDah {
+			return nil // Any mismatch = no match
 		}
-		if elements[i].IsDah == isDah {
-			matchCount++
-		}
-	}
-
-	// Calculate base confidence from element matching
-	elementConfidence := float64(matchCount) / float64(len(pattern.Elements))
-	if elementConfidence < 0.9 { // Require near-perfect element match
-		return nil
 	}
 
 	// Check if character breaks are in the right places
 	breakConfidence := a.calculateBreakConfidence(pattern, elements)
 
+	// Require high break confidence - breaks must align with pattern
+	if breakConfidence < 0.8 {
+		return nil
+	}
+
 	// Calculate suggested timing adjustment
 	suggestedBoundary := a.calculateSuggestedBoundary(pattern, elements)
 
-	// Overall confidence
-	confidence := elementConfidence*0.6 + breakConfidence*0.4
+	// Overall confidence based on break alignment
+	confidence := breakConfidence
 
 	return &PatternMatch{
 		Pattern:                    pattern,

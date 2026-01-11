@@ -208,7 +208,7 @@ func TestCommonPatterns_CQ(t *testing.T) {
 		}
 	}
 
-	// Break should be after index 3 (after C)
+	// Break should be after index 3 (after C: -.-.)
 	if len(cqPattern.Breaks) != 1 || cqPattern.Breaks[0] != 3 {
 		t.Errorf("CQ breaks = %v, want [3]", cqPattern.Breaks)
 	}
@@ -239,6 +239,11 @@ func TestCommonPatterns_DE(t *testing.T) {
 			t.Errorf("DE element[%d] = %v, want %v", i, dePattern.Elements[i], e)
 		}
 	}
+
+	// Break after index 2 (after D: -..)
+	if len(dePattern.Breaks) != 1 || dePattern.Breaks[0] != 2 {
+		t.Errorf("DE breaks = %v, want [2]", dePattern.Breaks)
+	}
 }
 
 func TestCommonPatterns_73(t *testing.T) {
@@ -265,6 +270,11 @@ func TestCommonPatterns_73(t *testing.T) {
 		if pattern.Elements[i] != e {
 			t.Errorf("73 element[%d] = %v, want %v", i, pattern.Elements[i], e)
 		}
+	}
+
+	// Break after index 4 (after 7: --...)
+	if len(pattern.Breaks) != 1 || pattern.Breaks[0] != 4 {
+		t.Errorf("73 breaks = %v, want [4]", pattern.Breaks)
 	}
 }
 
@@ -298,6 +308,38 @@ func TestCommonPatterns_5NN(t *testing.T) {
 	// Breaks should be after index 4 (after 5) and index 6 (after first N)
 	if len(pattern.Breaks) != 2 || pattern.Breaks[0] != 4 || pattern.Breaks[1] != 6 {
 		t.Errorf("5NN breaks = %v, want [4 6]", pattern.Breaks)
+	}
+}
+
+func TestCommonPatterns_GM(t *testing.T) {
+	var pattern *MorsePattern
+	for i := range CommonPatterns {
+		if CommonPatterns[i].Text == "GM" {
+			pattern = &CommonPatterns[i]
+			break
+		}
+	}
+
+	if pattern == nil {
+		t.Fatal("GM pattern not found in CommonPatterns")
+	}
+
+	// G = --. (dah dah dit)
+	// M = -- (dah dah)
+	expected := []bool{true, true, false, true, true}
+	if len(pattern.Elements) != len(expected) {
+		t.Fatalf("GM elements length = %d, want %d", len(pattern.Elements), len(expected))
+	}
+
+	for i, e := range expected {
+		if pattern.Elements[i] != e {
+			t.Errorf("GM element[%d] = %v, want %v", i, pattern.Elements[i], e)
+		}
+	}
+
+	// Break after index 2 (after G: --.)
+	if len(pattern.Breaks) != 1 || pattern.Breaks[0] != 2 {
+		t.Errorf("GM breaks = %v, want [2]", pattern.Breaks)
 	}
 }
 
