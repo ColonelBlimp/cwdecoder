@@ -403,18 +403,19 @@ func (a *AdaptiveDecoder) decodeElements(elements []Element) string {
 		}
 
 		if elem.IsCharEnd {
-			if treeIndex > 0 && treeIndex < len(MorseTree) {
-				char := MorseTree[treeIndex]
-				if char != 0 {
-					result.WriteRune(char)
-				}
+			// treeIndex is guaranteed to be in valid range (1 to len(MorseTree)-1)
+			// due to the bounds check above
+			char := MorseTree[treeIndex]
+			if char != 0 {
+				result.WriteRune(char)
 			}
 			treeIndex = 1
 		}
 	}
 
 	// Handle last character if not ended
-	if treeIndex > 1 && treeIndex < len(MorseTree) {
+	// treeIndex > 1 means we have accumulated elements
+	if treeIndex > 1 {
 		char := MorseTree[treeIndex]
 		if char != 0 {
 			result.WriteRune(char)
