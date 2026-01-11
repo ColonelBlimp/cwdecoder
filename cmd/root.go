@@ -128,6 +128,31 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("init cw decoder: %w", err)
 	}
 
+	// Initialize adaptive decoder if enabled
+	var adaptiveDecoder *cw.AdaptiveDecoder
+	if settings.AdaptivePatternEnabled {
+		adaptiveConfig := cw.AdaptiveConfig{
+			Enabled:             true,
+			MinConfidence:       settings.AdaptiveMinConfidence,
+			AdjustmentRate:      settings.AdaptiveAdjustmentRate,
+			MinMatchesForAdjust: settings.AdaptiveMinMatches,
+		}
+		adaptiveDecoder = cw.NewAdaptiveDecoder(cwDecoder, adaptiveConfig)
+
+		// Set up element recording callback
+		cwDecoder.SetElementCallback(adaptiveDecoder.RecordElement)
+
+		// Set up pattern correction callback (for debug output)
+		if settings.Debug {
+			adaptiveDecoder.SetCorrectedCallback(func(output cw.CorrectedOutput) {
+				if output.Corrected != "" && output.Corrected != output.Original {
+					fmt.Printf("\n[PATTERN] %q -> %q (confidence=%.2f, adjusted=%v)\n",
+						output.Original, output.Corrected, output.Confidence, output.TimingAdjusted)
+				}
+			})
+		}
+	}
+
 	// Set up decoded output callback
 	cwDecoder.SetCallback(func(output cw.DecodedOutput) {
 		if output.IsWordSpace {
@@ -161,13 +186,28 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 	})
 
 	// Start audio capture
-	fmt.Println("Starting CW decoder... Press Ctrl+C to stop.")
+	if settings.AdaptivePatternEnabled {
+		fmt.Println("Starting CW decoder with adaptive pattern matching... Press Ctrl+C to stop.")
+	} else {
+		fmt.Println("Starting CW decoder... Press Ctrl+C to stop.")
+	}
 	if err := capture.Start(ctx); err != nil {
 		return fmt.Errorf("start audio capture: %w", err)
 	}
 
 	// Wait for context cancellation
 	<-ctx.Done()
+
+	// Print pattern match statistics if adaptive decoder was used
+	if adaptiveDecoder != nil && settings.Debug {
+		counts := adaptiveDecoder.GetPatternMatchCounts()
+		if len(counts) > 0 {
+			fmt.Println("\nPattern match statistics:")
+			for pattern, count := range counts {
+				fmt.Printf("  %s: %d matches\n", pattern, count)
+			}
+		}
+	}
 
 	// Stop capture gracefully
 	if err := capture.Stop(); err != nil && err != audio.ErrNotRunning {

@@ -178,6 +178,10 @@ type DecodedOutput struct {
 	CurrentWPM int
 }
 
+// ElementCallback is called when an element (dit/dah) is decoded.
+// Used by AdaptiveDecoder for pattern matching.
+type ElementCallback func(isDah bool, duration, gapAfter time.Duration, isCharEnd, isWordEnd bool)
+
 // Decoder decodes CW from tone events into characters and words.
 type Decoder struct {
 	config DecoderConfig
@@ -190,8 +194,15 @@ type Decoder struct {
 	treeIndex int  // Position in MorseTree (1 = start)
 	inChar    bool // Whether we're currently building a character
 
+	// Last element tracking for adaptive decoder
+	lastElementDuration time.Duration
+	lastElementIsDah    bool
+	lastElementTime     time.Time
+
 	// Callback for decoded output
 	callbackPtr *DecodedCallback
+	// Callback for element recording (used by adaptive decoder)
+	elementCallbackPtr *ElementCallback
 }
 
 // NewDecoder creates a new CW decoder with the given configuration.
@@ -241,6 +252,17 @@ func (d *Decoder) SetCallback(cb DecodedCallback) {
 	}
 }
 
+// SetElementCallback sets the callback for element recording (used by AdaptiveDecoder).
+func (d *Decoder) SetElementCallback(cb ElementCallback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cb == nil {
+		d.elementCallbackPtr = nil
+	} else {
+		d.elementCallbackPtr = &cb
+	}
+}
+
 // HandleToneEvent processes a tone event from the detector.
 // This is the main entry point, typically called from detector's callback.
 func (d *Decoder) HandleToneEvent(event dsp.ToneEvent) {
@@ -262,6 +284,11 @@ func (d *Decoder) handleToneEnd(event dsp.ToneEvent) {
 
 	// Classify as dit or dah based on duration
 	isDah := durationMs > (d.ditDurationMs * d.config.DitDahBoundary)
+
+	// Track element for adaptive decoder
+	d.lastElementDuration = event.Duration
+	d.lastElementIsDah = isDah
+	d.lastElementTime = event.Timestamp
 
 	// Update timing estimate if adaptive timing is enabled
 	if d.config.AdaptiveTiming {
@@ -309,6 +336,17 @@ func (d *Decoder) handleSilenceEnd(event dsp.ToneEvent) {
 	// Word boundary: silence > CharWordBoundary (configurable, default 5.0) * dit duration
 	isWordSpace := durationMs > (spacingDitMs * d.config.CharWordBoundary)
 	isCharSpace := durationMs > (spacingDitMs * d.config.InterCharBoundary)
+
+	// Record element for adaptive decoder (before emitting character)
+	if d.elementCallbackPtr != nil && d.lastElementTime != (time.Time{}) {
+		(*d.elementCallbackPtr)(
+			d.lastElementIsDah,
+			d.lastElementDuration,
+			event.Duration, // gap after element
+			isCharSpace || isWordSpace,
+			isWordSpace,
+		)
+	}
 
 	if isCharSpace || isWordSpace {
 		// Emit the current character

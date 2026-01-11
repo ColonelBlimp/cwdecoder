@@ -93,6 +93,17 @@ char_word_boundary: 5.0 # Threshold ratio between character and word space (3.0-
 farnsworth_wpm: 0       # Effective WPM for character spacing (0 = same as wpm)
                         # Set lower than wpm to stretch spacing for easier copy
 
+# Adaptive Pattern Matching
+adaptive_pattern_enabled: true  # Enable dictionary-based pattern matching
+                                # Recognizes common CW words (CQ, DE, 73, Q-codes, etc.)
+                                # and auto-adjusts timing for better accuracy
+adaptive_min_confidence: 0.7    # Minimum confidence score for pattern match (0.0-1.0)
+                                # Higher = fewer false matches, lower = more corrections
+adaptive_adjustment_rate: 0.1   # How fast to adjust timing based on patterns (0.0-1.0)
+                                # Higher = faster adjustment, lower = more gradual
+adaptive_min_matches: 3         # Number of pattern matches before adjusting timing
+                                # Prevents single lucky matches from changing settings
+
 # Output
 debug: false            # Enable debug output
 `
@@ -130,6 +141,12 @@ type Settings struct {
 	CharWordBoundary  float64 `mapstructure:"char_word_boundary"`
 	FarnsworthWPM     int     `mapstructure:"farnsworth_wpm"`
 
+	// Adaptive Pattern Matching
+	AdaptivePatternEnabled bool    `mapstructure:"adaptive_pattern_enabled"`
+	AdaptiveMinConfidence  float64 `mapstructure:"adaptive_min_confidence"`
+	AdaptiveAdjustmentRate float64 `mapstructure:"adaptive_adjustment_rate"`
+	AdaptiveMinMatches     int     `mapstructure:"adaptive_min_matches"`
+
 	// Output
 	Debug bool `mapstructure:"debug"`
 }
@@ -160,6 +177,10 @@ func Init() error {
 	viper.SetDefault("inter_char_boundary", 2.0) // Midpoint of intra-char (1) and inter-char (3) ITU spacing
 	viper.SetDefault("char_word_boundary", 5.0)
 	viper.SetDefault("farnsworth_wpm", 0)
+	viper.SetDefault("adaptive_pattern_enabled", true)
+	viper.SetDefault("adaptive_min_confidence", 0.7)
+	viper.SetDefault("adaptive_adjustment_rate", 0.1)
+	viper.SetDefault("adaptive_min_matches", 3)
 	viper.SetDefault("debug", false)
 
 	// Support both config.yaml and .config.yaml
