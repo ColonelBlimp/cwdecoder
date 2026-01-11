@@ -174,6 +174,69 @@ func TestDecoder_Reset(t *testing.T) {
 	}
 }
 
+func TestDecoder_FlushTimer(t *testing.T) {
+	cfg := validConfig()
+	cfg.InitialWPM = 15 // 80ms dit
+
+	decoder, err := NewDecoder(cfg)
+	if err != nil {
+		t.Fatalf("NewDecoder() error = %v", err)
+	}
+
+	var received []DecodedOutput
+	var mu sync.Mutex
+	decoder.SetCallback(func(output DecodedOutput) {
+		mu.Lock()
+		received = append(received, output)
+		mu.Unlock()
+	})
+
+	// Send a dit (tone off event)
+	decoder.HandleToneEvent(dsp.ToneEvent{
+		ToneOn:    false,
+		Duration:  80 * time.Millisecond,
+		Timestamp: time.Now(),
+		Magnitude: 0.8,
+	})
+
+	// Wait for flush timer to fire (should be ~800ms based on CharWordBoundary * 2)
+	// Use a shorter wait for testing
+	time.Sleep(time.Duration(decoder.flushTimeout) + 100*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Should have received the character 'E' and a word space
+	if len(received) < 1 {
+		t.Fatal("expected to receive flushed character after timeout")
+	}
+	if received[0].Character != 'E' {
+		t.Errorf("flushed character = %c, want E", received[0].Character)
+	}
+}
+
+func TestDecoder_Stop(t *testing.T) {
+	cfg := validConfig()
+	decoder, err := NewDecoder(cfg)
+	if err != nil {
+		t.Fatalf("NewDecoder() error = %v", err)
+	}
+
+	// Send a tone to start the flush timer
+	decoder.HandleToneEvent(dsp.ToneEvent{
+		ToneOn:    false,
+		Duration:  80 * time.Millisecond,
+		Timestamp: time.Now(),
+		Magnitude: 0.8,
+	})
+
+	// Stop should clean up the timer without panicking
+	decoder.Stop()
+
+	// Calling Stop again should be safe
+	decoder.Stop()
+}
+
 func TestDecoder_SetCallback(t *testing.T) {
 	cfg := validConfig()
 	decoder, err := NewDecoder(cfg)

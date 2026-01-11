@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ColonelBlimp/cwdecoder/internal/audio"
 	"github.com/ColonelBlimp/cwdecoder/internal/config"
@@ -195,8 +196,32 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("start audio capture: %w", err)
 	}
 
+	// Start periodic WPM display if debug mode is enabled
+	var wpmTicker *time.Ticker
+	var wpmDone chan bool
+	if settings.Debug {
+		wpmTicker = time.NewTicker(5 * time.Second)
+		wpmDone = make(chan bool)
+		go func() {
+			for {
+				select {
+				case <-wpmDone:
+					return
+				case <-wpmTicker.C:
+					fmt.Printf("\n[WPM: %d]\n", cwDecoder.CurrentWPM())
+				}
+			}
+		}()
+	}
+
 	// Wait for context cancellation
 	<-ctx.Done()
+
+	// Stop WPM ticker if running
+	if wpmTicker != nil {
+		wpmTicker.Stop()
+		close(wpmDone)
+	}
 
 	// Print pattern match statistics if adaptive decoder was used
 	if adaptiveDecoder != nil && settings.Debug {
@@ -208,6 +233,9 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 			}
 		}
 	}
+
+	// Stop CW decoder (cleans up flush timer)
+	cwDecoder.Stop()
 
 	// Stop capture gracefully
 	if err := capture.Stop(); err != nil && err != audio.ErrNotRunning {

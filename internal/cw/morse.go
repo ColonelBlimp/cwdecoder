@@ -182,6 +182,14 @@ type DecodedOutput struct {
 // Used by AdaptiveDecoder for pattern matching.
 type ElementCallback func(isDah bool, duration, gapAfter time.Duration, isCharEnd, isWordEnd bool)
 
+// FlushTimeout constants
+const (
+	// DefaultFlushTimeoutMs is the default timeout to flush pending characters (in milliseconds)
+	DefaultFlushTimeoutMs = 500
+	// MinFlushTimeoutMs is the minimum allowed flush timeout
+	MinFlushTimeoutMs = 100
+)
+
 // Decoder decodes CW from tone events into characters and words.
 type Decoder struct {
 	config DecoderConfig
@@ -198,6 +206,11 @@ type Decoder struct {
 	lastElementDuration time.Duration
 	lastElementIsDah    bool
 	lastElementTime     time.Time
+
+	// Flush timeout for pending characters
+	flushTimer   *time.Timer
+	flushTimeout time.Duration
+	lastToneOff  time.Time // When the last tone ended
 
 	// Callback for decoded output
 	callbackPtr *DecodedCallback
@@ -233,11 +246,19 @@ func NewDecoder(cfg DecoderConfig) (*Decoder, error) {
 	// dit_duration_ms = 60000 / (WPM * DitsPerWord)
 	ditDurationMs := MillisecondsPerMinute / (float64(cfg.InitialWPM) * DitsPerWord)
 
+	// Calculate flush timeout based on word space timing
+	// Use CharWordBoundary * dit duration as minimum, with a reasonable default
+	flushTimeoutMs := ditDurationMs * cfg.CharWordBoundary * 2
+	if flushTimeoutMs < MinFlushTimeoutMs {
+		flushTimeoutMs = MinFlushTimeoutMs
+	}
+
 	return &Decoder{
 		config:        cfg,
 		ditDurationMs: ditDurationMs,
 		treeIndex:     1, // Start at root
 		inChar:        false,
+		flushTimeout:  time.Duration(flushTimeoutMs) * time.Millisecond,
 	}, nil
 }
 
@@ -260,6 +281,17 @@ func (d *Decoder) SetElementCallback(cb ElementCallback) {
 		d.elementCallbackPtr = nil
 	} else {
 		d.elementCallbackPtr = &cb
+	}
+}
+
+// Stop cleans up decoder resources (timers, etc.).
+// Should be called when the decoder is no longer needed.
+func (d *Decoder) Stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.flushTimer != nil {
+		d.flushTimer.Stop()
+		d.flushTimer = nil
 	}
 }
 
@@ -289,6 +321,10 @@ func (d *Decoder) handleToneEnd(event dsp.ToneEvent) {
 	d.lastElementDuration = event.Duration
 	d.lastElementIsDah = isDah
 	d.lastElementTime = event.Timestamp
+	d.lastToneOff = event.Timestamp
+
+	// Start/reset flush timer to emit pending character if no more tones arrive
+	d.startFlushTimer()
 
 	// Update timing estimate if adaptive timing is enabled
 	if d.config.AdaptiveTiming {
@@ -317,8 +353,44 @@ func (d *Decoder) handleToneEnd(event dsp.ToneEvent) {
 	}
 }
 
+// startFlushTimer starts or resets the flush timer.
+// When the timer fires, any pending character will be emitted.
+func (d *Decoder) startFlushTimer() {
+	// Stop existing timer if running
+	if d.flushTimer != nil {
+		d.flushTimer.Stop()
+	}
+
+	// Start new timer
+	d.flushTimer = time.AfterFunc(d.flushTimeout, func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.flushPendingCharacter()
+	})
+}
+
+// flushPendingCharacter emits any character currently being built.
+// Called when flush timer fires (silence timeout).
+func (d *Decoder) flushPendingCharacter() {
+	if !d.inChar {
+		return
+	}
+
+	// Emit the pending character
+	d.emitCharacter(time.Now())
+
+	// Also emit word space since we've had a long silence
+	d.emitWordSpace(time.Now())
+}
+
 // handleSilenceEnd checks if the silence duration indicates a character or word boundary.
 func (d *Decoder) handleSilenceEnd(event dsp.ToneEvent) {
+	// Cancel flush timer since we received a new tone
+	if d.flushTimer != nil {
+		d.flushTimer.Stop()
+		d.flushTimer = nil
+	}
+
 	if !d.inChar {
 		return // No character being built
 	}
@@ -427,6 +499,12 @@ func (d *Decoder) CurrentWPM() int {
 func (d *Decoder) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	// Stop flush timer if running
+	if d.flushTimer != nil {
+		d.flushTimer.Stop()
+		d.flushTimer = nil
+	}
 
 	d.ditDurationMs = MillisecondsPerMinute / (float64(d.config.InitialWPM) * DitsPerWord)
 	d.treeIndex = 1
