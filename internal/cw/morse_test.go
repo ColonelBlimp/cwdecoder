@@ -15,6 +15,7 @@ func validConfig() DecoderConfig {
 		AdaptiveTiming:    true,
 		AdaptiveSmoothing: 0.1,
 		DitDahBoundary:    2.0,
+		InterCharBoundary: 2.0,
 		CharWordBoundary:  5.0,
 		FarnsworthWPM:     0,
 	}
@@ -516,8 +517,8 @@ func TestDecoder_FarnsworthTiming(t *testing.T) {
 	// Dit at 20 WPM = 60ms
 	ditDuration := 60 * time.Millisecond
 	// With Farnsworth at 10 WPM, spacing dit = 120ms
-	// So char space threshold = 120 * 1 = 120ms (IntraCharSpaceRatio)
-	charSpace := 150 * time.Millisecond
+	// InterCharBoundary = 2.0, so char space threshold = 120 * 2.0 = 240ms
+	charSpace := 300 * time.Millisecond // Must be > 240ms
 
 	// Dit
 	decoder.HandleToneEvent(dsp.ToneEvent{

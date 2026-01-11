@@ -51,6 +51,7 @@ func TestInit_WithDefaults(t *testing.T) {
 		{"adaptive_timing", true},
 		{"adaptive_smoothing", 0.1},
 		{"dit_dah_boundary", 2.0},
+		{"inter_char_boundary", 2.0},
 		{"char_word_boundary", 5.0},
 		{"farnsworth_wpm", 0},
 		{"buffer_size", 1024},
@@ -585,6 +586,7 @@ func TestSettings_Validate_ValidSettings(t *testing.T) {
 		AdaptiveTiming:    true,
 		AdaptiveSmoothing: 0.1,
 		DitDahBoundary:    2.0,
+		InterCharBoundary: 2.0,
 		CharWordBoundary:  5.0,
 		FarnsworthWPM:     0,
 		Debug:             false,
@@ -948,6 +950,7 @@ func TestSettings_Validate_MultipleErrors(t *testing.T) {
 		Format:            "bad", // invalid
 		AdaptiveSmoothing: 2.0,   // invalid
 		DitDahBoundary:    0.5,   // invalid
+		InterCharBoundary: 0.5,   // invalid
 		CharWordBoundary:  0.5,   // invalid
 		FarnsworthWPM:     100,   // invalid (> WPM)
 	}
@@ -974,6 +977,7 @@ func TestSettings_Validate_MultipleErrors(t *testing.T) {
 		"format",
 		"adaptive_smoothing",
 		"dit_dah_boundary",
+		"inter_char_boundary",
 		"char_word_boundary",
 		"farnsworth_wpm",
 	}
@@ -1007,6 +1011,7 @@ func validSettings() *Settings {
 		AdaptiveTiming:    true,
 		AdaptiveSmoothing: 0.1,
 		DitDahBoundary:    2.0,
+		InterCharBoundary: 2.0,
 		CharWordBoundary:  5.0,
 		FarnsworthWPM:     0,
 		Debug:             false,

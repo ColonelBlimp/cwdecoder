@@ -150,6 +150,10 @@ type DecoderConfig struct {
 	// DitDahBoundary is the threshold ratio between dit and dah (from config: dit_dah_boundary)
 	// A tone duration > (dit_duration * DitDahBoundary) is classified as dah
 	DitDahBoundary float64
+	// InterCharBoundary is the threshold ratio for inter-character space detection (from config: inter_char_boundary)
+	// A space duration > (dit_duration * InterCharBoundary) triggers character emission
+	// ITU standard: inter-char space = 3 dits, so threshold should be ~2.0 (midpoint of 1 and 3)
+	InterCharBoundary float64
 	// CharWordBoundary is the threshold ratio between character and word space (from config: char_word_boundary)
 	// A space duration > (dit_duration * CharWordBoundary) is classified as word space
 	CharWordBoundary float64
@@ -206,6 +210,10 @@ func NewDecoder(cfg DecoderConfig) (*Decoder, error) {
 	}
 	if cfg.CharWordBoundary <= 0 {
 		return nil, ErrInvalidCharWordBoundary
+	}
+	// Default InterCharBoundary to 2.0 if not set (midpoint of intra-char=1 and inter-char=3)
+	if cfg.InterCharBoundary <= 0 {
+		cfg.InterCharBoundary = DahDitThreshold // 2.0
 	}
 
 	// Calculate initial dit duration from WPM
@@ -297,8 +305,10 @@ func (d *Decoder) handleSilenceEnd(event dsp.ToneEvent) {
 	}
 
 	// Determine if this is a character boundary or word boundary
+	// Character boundary: silence > InterCharBoundary (configurable, default 2.0) * dit duration
+	// Word boundary: silence > CharWordBoundary (configurable, default 5.0) * dit duration
 	isWordSpace := durationMs > (spacingDitMs * d.config.CharWordBoundary)
-	isCharSpace := durationMs > (spacingDitMs * IntraCharSpaceRatio)
+	isCharSpace := durationMs > (spacingDitMs * d.config.InterCharBoundary)
 
 	if isCharSpace || isWordSpace {
 		// Emit the current character

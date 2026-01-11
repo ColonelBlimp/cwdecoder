@@ -119,6 +119,7 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 		AdaptiveTiming:    settings.AdaptiveTiming,
 		AdaptiveSmoothing: settings.AdaptiveSmoothing,
 		DitDahBoundary:    settings.DitDahBoundary,
+		InterCharBoundary: settings.InterCharBoundary,
 		CharWordBoundary:  settings.CharWordBoundary,
 		FarnsworthWPM:     settings.FarnsworthWPM,
 	}

@@ -44,7 +44,9 @@ const (
 	MaxAdaptiveSmoothing = 1.0
 	MinDitDahBoundary    = 1.0  // Must be > 1 to distinguish dit from dah
 	MaxDitDahBoundary    = 4.0  // Reasonable upper limit
-	MinCharWordBoundary  = 2.0  // Must be > IntraCharSpaceRatio (1.0)
+	MinInterCharBoundary = 1.5  // Must be > intra-char space (1.0)
+	MaxInterCharBoundary = 4.0  // Must be < char-word boundary
+	MinCharWordBoundary  = 3.0  // Must be > inter-char boundary
 	MaxCharWordBoundary  = 10.0 // Reasonable upper limit
 
 	DefaultConfig = `# CW Decoder Configuration
@@ -82,8 +84,12 @@ adaptive_smoothing: 0.1 # EMA smoothing factor for timing adaptation (0.0-1.0)
                         # Lower = more stable, resistant to timing errors
 dit_dah_boundary: 2.0   # Threshold ratio between dit and dah (typically 2.0)
                         # Tone > (dit_duration * dit_dah_boundary) is classified as dah
-char_word_boundary: 5.0 # Threshold ratio between character and word space (typically 5.0)
+inter_char_boundary: 2.0 # Threshold ratio for inter-character space detection (1.5-4.0)
+                        # Space > (dit_duration * inter_char_boundary) triggers character emission
+                        # ITU: intra-char=1 dit, inter-char=3 dits; 2.0 is midpoint
+char_word_boundary: 5.0 # Threshold ratio between character and word space (3.0-10.0)
                         # Space > (dit_duration * char_word_boundary) is word space
+                        # ITU: inter-char=3 dits, word=7 dits; 5.0 is midpoint
 farnsworth_wpm: 0       # Effective WPM for character spacing (0 = same as wpm)
                         # Set lower than wpm to stretch spacing for easier copy
 
@@ -120,6 +126,7 @@ type Settings struct {
 	AdaptiveTiming    bool    `mapstructure:"adaptive_timing"`
 	AdaptiveSmoothing float64 `mapstructure:"adaptive_smoothing"`
 	DitDahBoundary    float64 `mapstructure:"dit_dah_boundary"`
+	InterCharBoundary float64 `mapstructure:"inter_char_boundary"`
 	CharWordBoundary  float64 `mapstructure:"char_word_boundary"`
 	FarnsworthWPM     int     `mapstructure:"farnsworth_wpm"`
 
@@ -150,6 +157,7 @@ func Init() error {
 	viper.SetDefault("adaptive_timing", true)
 	viper.SetDefault("adaptive_smoothing", 0.1)
 	viper.SetDefault("dit_dah_boundary", 2.0)
+	viper.SetDefault("inter_char_boundary", 2.0) // Midpoint of intra-char (1) and inter-char (3) ITU spacing
 	viper.SetDefault("char_word_boundary", 5.0)
 	viper.SetDefault("farnsworth_wpm", 0)
 	viper.SetDefault("debug", false)
@@ -277,6 +285,9 @@ func (s *Settings) Validate() error {
 	}
 	if s.DitDahBoundary < MinDitDahBoundary || s.DitDahBoundary > MaxDitDahBoundary {
 		errs = append(errs, fmt.Errorf("dit_dah_boundary must be between %.1f and %.1f, got %v", MinDitDahBoundary, MaxDitDahBoundary, s.DitDahBoundary))
+	}
+	if s.InterCharBoundary < MinInterCharBoundary || s.InterCharBoundary > MaxInterCharBoundary {
+		errs = append(errs, fmt.Errorf("inter_char_boundary must be between %.1f and %.1f, got %v", MinInterCharBoundary, MaxInterCharBoundary, s.InterCharBoundary))
 	}
 	if s.CharWordBoundary < MinCharWordBoundary || s.CharWordBoundary > MaxCharWordBoundary {
 		errs = append(errs, fmt.Errorf("char_word_boundary must be between %.1f and %.1f, got %v", MinCharWordBoundary, MaxCharWordBoundary, s.CharWordBoundary))
