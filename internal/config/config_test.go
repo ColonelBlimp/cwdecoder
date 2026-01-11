@@ -49,6 +49,10 @@ func TestInit_WithDefaults(t *testing.T) {
 		{"agc_warmup_blocks", 10},
 		{"wpm", 15},
 		{"adaptive_timing", true},
+		{"adaptive_smoothing", 0.1},
+		{"dit_dah_boundary", 2.0},
+		{"char_word_boundary", 5.0},
+		{"farnsworth_wpm", 0},
 		{"buffer_size", 1024},
 		{"debug", false},
 	}
@@ -562,23 +566,28 @@ buffer_size: 2048
 
 func TestSettings_Validate_ValidSettings(t *testing.T) {
 	s := &Settings{
-		AudioDevice:    "hw:1,0",
-		DeviceIndex:    -1,
-		SampleRate:     48000,
-		Channels:       1,
-		Format:         "S16_LE",
-		BufferSize:     1024,
-		ToneFrequency:  600,
-		BlockSize:      512,
-		OverlapPct:     50,
-		Threshold:      0.4,
-		Hysteresis:     5,
-		AGCEnabled:     true,
-		AGCDecay:       0.9995,
-		AGCAttack:      0.1,
-		WPM:            15,
-		AdaptiveTiming: true,
-		Debug:          false,
+		AudioDevice:       "hw:1,0",
+		DeviceIndex:       -1,
+		SampleRate:        48000,
+		Channels:          1,
+		Format:            "S16_LE",
+		BufferSize:        1024,
+		ToneFrequency:     600,
+		BlockSize:         512,
+		OverlapPct:        50,
+		Threshold:         0.4,
+		Hysteresis:        5,
+		AGCEnabled:        true,
+		AGCDecay:          0.9995,
+		AGCAttack:         0.1,
+		AGCWarmupBlocks:   10,
+		WPM:               15,
+		AdaptiveTiming:    true,
+		AdaptiveSmoothing: 0.1,
+		DitDahBoundary:    2.0,
+		CharWordBoundary:  5.0,
+		FarnsworthWPM:     0,
+		Debug:             false,
 	}
 
 	if err := s.Validate(); err != nil {
@@ -925,18 +934,22 @@ func TestSettings_Validate_NyquistFrequency(t *testing.T) {
 
 func TestSettings_Validate_MultipleErrors(t *testing.T) {
 	s := &Settings{
-		SampleRate:    0,     // invalid
-		Channels:      0,     // invalid
-		BufferSize:    10,    // invalid
-		ToneFrequency: 0,     // invalid
-		BlockSize:     10,    // invalid
-		OverlapPct:    -1,    // invalid
-		Threshold:     2.0,   // invalid
-		Hysteresis:    0,     // invalid
-		AGCDecay:      0.5,   // invalid
-		AGCAttack:     2.0,   // invalid
-		WPM:           0,     // invalid
-		Format:        "bad", // invalid
+		SampleRate:        0,     // invalid
+		Channels:          0,     // invalid
+		BufferSize:        10,    // invalid
+		ToneFrequency:     0,     // invalid
+		BlockSize:         10,    // invalid
+		OverlapPct:        -1,    // invalid
+		Threshold:         2.0,   // invalid
+		Hysteresis:        0,     // invalid
+		AGCDecay:          0.5,   // invalid
+		AGCAttack:         2.0,   // invalid
+		WPM:               0,     // invalid
+		Format:            "bad", // invalid
+		AdaptiveSmoothing: 2.0,   // invalid
+		DitDahBoundary:    0.5,   // invalid
+		CharWordBoundary:  0.5,   // invalid
+		FarnsworthWPM:     100,   // invalid (> WPM)
 	}
 
 	err := s.Validate()
@@ -959,6 +972,10 @@ func TestSettings_Validate_MultipleErrors(t *testing.T) {
 		"agc_attack",
 		"wpm",
 		"format",
+		"adaptive_smoothing",
+		"dit_dah_boundary",
+		"char_word_boundary",
+		"farnsworth_wpm",
 	}
 
 	for _, substr := range expectedSubstrings {
@@ -971,22 +988,27 @@ func TestSettings_Validate_MultipleErrors(t *testing.T) {
 // validSettings returns a Settings struct with all valid values
 func validSettings() *Settings {
 	return &Settings{
-		AudioDevice:    "hw:1,0",
-		DeviceIndex:    -1,
-		SampleRate:     48000,
-		Channels:       1,
-		Format:         "S16_LE",
-		BufferSize:     1024,
-		ToneFrequency:  600,
-		BlockSize:      512,
-		OverlapPct:     50,
-		Threshold:      0.4,
-		Hysteresis:     5,
-		AGCEnabled:     true,
-		AGCDecay:       0.9995,
-		AGCAttack:      0.1,
-		WPM:            15,
-		AdaptiveTiming: true,
-		Debug:          false,
+		AudioDevice:       "hw:1,0",
+		DeviceIndex:       -1,
+		SampleRate:        48000,
+		Channels:          1,
+		Format:            "S16_LE",
+		BufferSize:        1024,
+		ToneFrequency:     600,
+		BlockSize:         512,
+		OverlapPct:        50,
+		Threshold:         0.4,
+		Hysteresis:        5,
+		AGCEnabled:        true,
+		AGCDecay:          0.9995,
+		AGCAttack:         0.1,
+		AGCWarmupBlocks:   10,
+		WPM:               15,
+		AdaptiveTiming:    true,
+		AdaptiveSmoothing: 0.1,
+		DitDahBoundary:    2.0,
+		CharWordBoundary:  5.0,
+		FarnsworthWPM:     0,
+		Debug:             false,
 	}
 }

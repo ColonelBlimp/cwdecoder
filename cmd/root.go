@@ -10,6 +10,7 @@ import (
 
 	"github.com/ColonelBlimp/cwdecoder/internal/audio"
 	"github.com/ColonelBlimp/cwdecoder/internal/config"
+	"github.com/ColonelBlimp/cwdecoder/internal/cw"
 	"github.com/ColonelBlimp/cwdecoder/internal/dsp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -112,8 +113,35 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("init detector: %w", err)
 	}
 
-	// Set up tone event callback
-	// TODO: Replace with CW decoder when implemented
+	// Initialize CW decoder
+	cwDecoderConfig := cw.DecoderConfig{
+		InitialWPM:        settings.WPM,
+		AdaptiveTiming:    settings.AdaptiveTiming,
+		AdaptiveSmoothing: settings.AdaptiveSmoothing,
+		DitDahBoundary:    settings.DitDahBoundary,
+		CharWordBoundary:  settings.CharWordBoundary,
+		FarnsworthWPM:     settings.FarnsworthWPM,
+	}
+	cwDecoder, err := cw.NewDecoder(cwDecoderConfig)
+	if err != nil {
+		return fmt.Errorf("init cw decoder: %w", err)
+	}
+
+	// Set up decoded output callback
+	cwDecoder.SetCallback(func(output cw.DecodedOutput) {
+		if output.IsWordSpace {
+			fmt.Print(" ")
+		} else if output.Character != 0 {
+			fmt.Print(string(output.Character))
+		}
+		// Flush output for real-time display
+		if err := os.Stdout.Sync(); err != nil {
+			// Sync can fail on some terminals, ignore non-critical error
+			_ = err
+		}
+	})
+
+	// Wire detector to CW decoder
 	detector.SetCallback(func(event dsp.ToneEvent) {
 		if settings.Debug {
 			if event.ToneOn {
@@ -123,6 +151,7 @@ func runDecoder(_ *cobra.Command, _ []string) error {
 					event.Duration, event.Magnitude)
 			}
 		}
+		cwDecoder.HandleToneEvent(event)
 	})
 
 	// Wire audio capture to detector (direct callback for lowest latency)

@@ -39,6 +39,14 @@ const (
 	MaxWPM           = 60
 	NyquistDivisor   = 2.0 // Nyquist frequency = sample_rate / 2
 
+	// CW Decoder validation constants
+	MinAdaptiveSmoothing = 0.0
+	MaxAdaptiveSmoothing = 1.0
+	MinDitDahBoundary    = 1.0  // Must be > 1 to distinguish dit from dah
+	MaxDitDahBoundary    = 4.0  // Reasonable upper limit
+	MinCharWordBoundary  = 2.0  // Must be > IntraCharSpaceRatio (1.0)
+	MaxCharWordBoundary  = 10.0 // Reasonable upper limit
+
 	DefaultConfig = `# CW Decoder Configuration
 
 # Audio device settings
@@ -66,9 +74,18 @@ agc_attack: 0.1         # AGC attack rate (0.0-1.0), how fast to respond to loud
 agc_warmup_blocks: 10   # Number of blocks to process before enabling detection
                         # Allows AGC to calibrate to signal level, preventing false triggers
 
-# Timing
-wpm: 15                 # Initial WPM estimate
-adaptive_timing: true   # Adapt to sender's speed
+# CW Timing
+wpm: 15                 # Initial WPM estimate (5-60)
+adaptive_timing: true   # Adapt to sender's speed automatically
+adaptive_smoothing: 0.1 # EMA smoothing factor for timing adaptation (0.0-1.0)
+                        # Higher = faster adaptation to speed changes
+                        # Lower = more stable, resistant to timing errors
+dit_dah_boundary: 2.0   # Threshold ratio between dit and dah (typically 2.0)
+                        # Tone > (dit_duration * dit_dah_boundary) is classified as dah
+char_word_boundary: 5.0 # Threshold ratio between character and word space (typically 5.0)
+                        # Space > (dit_duration * char_word_boundary) is word space
+farnsworth_wpm: 0       # Effective WPM for character spacing (0 = same as wpm)
+                        # Set lower than wpm to stretch spacing for easier copy
 
 # Output
 debug: false            # Enable debug output
@@ -98,9 +115,13 @@ type Settings struct {
 	AGCAttack       float64 `mapstructure:"agc_attack"`
 	AGCWarmupBlocks int     `mapstructure:"agc_warmup_blocks"`
 
-	// Timing
-	WPM            int  `mapstructure:"wpm"`
-	AdaptiveTiming bool `mapstructure:"adaptive_timing"`
+	// CW Timing
+	WPM               int     `mapstructure:"wpm"`
+	AdaptiveTiming    bool    `mapstructure:"adaptive_timing"`
+	AdaptiveSmoothing float64 `mapstructure:"adaptive_smoothing"`
+	DitDahBoundary    float64 `mapstructure:"dit_dah_boundary"`
+	CharWordBoundary  float64 `mapstructure:"char_word_boundary"`
+	FarnsworthWPM     int     `mapstructure:"farnsworth_wpm"`
 
 	// Output
 	Debug bool `mapstructure:"debug"`
@@ -127,6 +148,10 @@ func Init() error {
 	viper.SetDefault("agc_warmup_blocks", 10)
 	viper.SetDefault("wpm", 15)
 	viper.SetDefault("adaptive_timing", true)
+	viper.SetDefault("adaptive_smoothing", 0.1)
+	viper.SetDefault("dit_dah_boundary", 2.0)
+	viper.SetDefault("char_word_boundary", 5.0)
+	viper.SetDefault("farnsworth_wpm", 0)
 	viper.SetDefault("debug", false)
 
 	// Support both config.yaml and .config.yaml
@@ -246,6 +271,18 @@ func (s *Settings) Validate() error {
 	// Timing
 	if s.WPM < MinWPM || s.WPM > MaxWPM {
 		errs = append(errs, fmt.Errorf("wpm must be between %d and %d, got %d", MinWPM, MaxWPM, s.WPM))
+	}
+	if s.AdaptiveSmoothing < MinAdaptiveSmoothing || s.AdaptiveSmoothing > MaxAdaptiveSmoothing {
+		errs = append(errs, fmt.Errorf("adaptive_smoothing must be between %.1f and %.1f, got %v", MinAdaptiveSmoothing, MaxAdaptiveSmoothing, s.AdaptiveSmoothing))
+	}
+	if s.DitDahBoundary < MinDitDahBoundary || s.DitDahBoundary > MaxDitDahBoundary {
+		errs = append(errs, fmt.Errorf("dit_dah_boundary must be between %.1f and %.1f, got %v", MinDitDahBoundary, MaxDitDahBoundary, s.DitDahBoundary))
+	}
+	if s.CharWordBoundary < MinCharWordBoundary || s.CharWordBoundary > MaxCharWordBoundary {
+		errs = append(errs, fmt.Errorf("char_word_boundary must be between %.1f and %.1f, got %v", MinCharWordBoundary, MaxCharWordBoundary, s.CharWordBoundary))
+	}
+	if s.FarnsworthWPM < 0 || s.FarnsworthWPM > s.WPM {
+		errs = append(errs, fmt.Errorf("farnsworth_wpm must be between 0 and wpm (%d), got %d", s.WPM, s.FarnsworthWPM))
 	}
 
 	// Validate audio format
