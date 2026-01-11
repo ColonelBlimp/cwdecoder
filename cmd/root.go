@@ -2,10 +2,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/ColonelBlimp/cwdecoder/internal/audio"
 	"github.com/ColonelBlimp/cwdecoder/internal/config"
+	"github.com/ColonelBlimp/cwdecoder/internal/dsp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -14,10 +19,135 @@ var rootCmd = &cobra.Command{
 	Use:   "decoder",
 	Short: "CW (Morse code) decoder from audio input",
 	Long:  `A real-time CW decoder that processes audio input and outputs decoded text.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Running decoder...")
-		return nil
-	},
+	RunE:  runDecoder,
+}
+
+// runDecoder is the main entry point that wires all components together.
+func runDecoder(_ *cobra.Command, _ []string) error {
+	// Get validated settings
+	settings, err := config.Get()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if settings.Debug {
+		fmt.Printf("Config: sample_rate=%.0f, tone_frequency=%.0f, block_size=%d\n",
+			settings.SampleRate, settings.ToneFrequency, settings.BlockSize)
+		fmt.Printf("Detection: threshold=%.2f, hysteresis=%d, agc_enabled=%v\n",
+			settings.Threshold, settings.Hysteresis, settings.AGCEnabled)
+	}
+
+	// Create context with cancellation for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle OS signals for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		fmt.Printf("\nReceived signal %v, shutting down...\n", sig)
+		cancel()
+	}()
+
+	// Initialize audio capture
+	audioConfig := audio.Config{
+		DeviceIndex: settings.DeviceIndex,
+		SampleRate:  uint32(settings.SampleRate),
+		Channels:    uint32(settings.Channels),
+		BufferSize:  uint32(settings.BufferSize),
+	}
+	capture := audio.New(audioConfig)
+
+	if err := capture.Init(); err != nil {
+		return fmt.Errorf("init audio: %w", err)
+	}
+	defer func() {
+		if err := capture.Close(); err != nil {
+			if _, printErr := fmt.Fprintf(os.Stderr, "error closing audio capture: %v\n", err); printErr != nil {
+				// Fall back to standard print if Fprintf fails
+				fmt.Println("error closing audio capture:", err)
+			}
+		}
+	}()
+
+	// List available devices if in debug mode
+	if settings.Debug {
+		devices, err := capture.ListDevices()
+		if err != nil {
+			if _, printErr := fmt.Fprintf(os.Stderr, "warning: could not list audio devices: %v\n", err); printErr != nil {
+				fmt.Println("warning: could not list audio devices:", err)
+			}
+		} else {
+			fmt.Printf("Available audio devices:\n")
+			for i, dev := range devices {
+				fmt.Printf("  [%d] %s\n", i, dev.Name())
+			}
+		}
+	}
+
+	// Initialize Goertzel filter for tone detection
+	goertzelConfig := dsp.GoertzelConfig{
+		TargetFrequency: settings.ToneFrequency,
+		SampleRate:      settings.SampleRate,
+		BlockSize:       settings.BlockSize,
+	}
+	goertzel, err := dsp.NewGoertzel(goertzelConfig)
+	if err != nil {
+		return fmt.Errorf("init goertzel: %w", err)
+	}
+
+	// Initialize tone detector
+	detectorConfig := dsp.DetectorConfig{
+		Threshold:       settings.Threshold,
+		Hysteresis:      settings.Hysteresis,
+		OverlapPct:      settings.OverlapPct,
+		AGCEnabled:      settings.AGCEnabled,
+		AGCDecay:        settings.AGCDecay,
+		AGCAttack:       settings.AGCAttack,
+		AGCWarmupBlocks: settings.AGCWarmupBlocks,
+	}
+	detector, err := dsp.NewDetector(detectorConfig, goertzel)
+	if err != nil {
+		return fmt.Errorf("init detector: %w", err)
+	}
+
+	// Set up tone event callback
+	// TODO: Replace with CW decoder when implemented
+	detector.SetCallback(func(event dsp.ToneEvent) {
+		if settings.Debug {
+			if event.ToneOn {
+				fmt.Printf("[TONE ON]  magnitude=%.3f\n", event.Magnitude)
+			} else {
+				fmt.Printf("[TONE OFF] duration=%v magnitude=%.3f\n",
+					event.Duration, event.Magnitude)
+			}
+		}
+	})
+
+	// Wire audio capture to detector (direct callback for lowest latency)
+	capture.SetCallback(func(samples []float32) {
+		detector.Process(samples)
+	})
+
+	// Start audio capture
+	fmt.Println("Starting CW decoder... Press Ctrl+C to stop.")
+	if err := capture.Start(ctx); err != nil {
+		return fmt.Errorf("start audio capture: %w", err)
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+	// Stop capture gracefully
+	if err := capture.Stop(); err != nil && err != audio.ErrNotRunning {
+		if _, printErr := fmt.Fprintf(os.Stderr, "error stopping audio capture: %v\n", err); printErr != nil {
+			fmt.Println("error stopping audio capture:", err)
+		}
+	}
+
+	fmt.Println("CW decoder stopped.")
+	return nil
 }
 
 func Execute() {
